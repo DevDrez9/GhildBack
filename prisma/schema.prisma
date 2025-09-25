@@ -1,0 +1,641 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model ConfigWeb {
+  id          Int      @id @default(autoincrement())
+  nombreSitio String
+  logoUrl     String?
+  colorPrimario String
+  colorSecundario String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  tiendas     Tienda[]
+  banners     ImagenBanner[]
+}
+
+model ImagenBanner {
+  id          Int       @id @default(autoincrement())
+  url         String
+  orden       Int       @default(0)
+  titulo      String?
+  subtitulo   String?
+  enlace      String?
+  configWebId Int
+  configWeb   ConfigWeb @relation(fields: [configWebId], references: [id])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Tienda {
+  id          Int      @id @default(autoincrement())
+  nombre      String
+  descripcion String?
+  dominio     String   @unique
+  activa      Boolean  @default(true)
+  configWebId Int
+  configWeb   ConfigWeb @relation(fields: [configWebId], references: [id], map: "fk_tienda_config")
+  categorias  Categoria[]
+  carritos    Carrito[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  productos   Producto[]
+  usuarios    UsuarioTienda[]
+  ventas      Venta[]
+  proveedores ProveedorTienda[]
+  sucursales  Sucursal[]
+  inventario  InventarioTienda[]
+  esPrincipal Boolean  @default(false)
+  inventarioSucursal InventarioSucursal[]
+  costurero Costurero[]
+  trabajoEnProceso TrabajoEnProceso[]
+  trabajoFinalizado TrabajoFinalizado[]
+}
+model Categoria {
+  id          Int      @id @default(autoincrement())
+  nombre      String
+  descripcion String?
+  tiendaId    Int
+  tienda      Tienda   @relation(fields: [tiendaId], references: [id])
+  subcategorias Subcategoria[]
+  productos   Producto[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Subcategoria {
+  id          Int      @id @default(autoincrement())
+  nombre      String
+  descripcion String?
+  categoriaId Int?
+  categoria   Categoria? @relation(fields: [categoriaId], references: [id])
+  productos   Producto[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+
+model Producto {
+  id             Int      @id @default(autoincrement())
+  nombre         String
+  descripcion    String?
+  precio         Decimal
+  precioOferta   Decimal?  @default(0)
+  enOferta       Boolean   @default(false)
+  esNuevo        Boolean   @default(false)
+  esDestacado    Boolean   @default(false)
+  stock          Int       @default(0)
+  stockMinimo    Int       @default(5)
+  sku            String?   @unique
+  imagenUrl      String?   @map("imagen_url")
+  categoriaId    Int
+  categoria      Categoria @relation(fields: [categoriaId], references: [id], map: "fk_producto_categoria")
+  subcategoriaId Int?
+  subcategoria   Subcategoria? @relation(fields: [subcategoriaId], references: [id], map: "fk_producto_subcategoria")
+  tiendaId       Int
+  tienda         Tienda   @relation(fields: [tiendaId], references: [id], map: "fk_producto_tienda")
+  imagenes       ImagenProducto[]
+  movimientos    MovimientoInventario[]
+  proveedorId    Int?
+  proveedor      Proveedor? @relation(fields: [proveedorId], references: [id], map: "fk_producto_proveedor")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  carritoItem    CarritoItem[]
+  ventaItems     VentaItem[]
+  compraItem     CompraItem[]
+  inventarioTienda InventarioTienda[]
+  inventarioSucursales InventarioSucursal[]
+  transferencias TransferenciaInventario[]
+  parametrosTela ParametrosTela[]
+  
+}
+
+
+model ImagenProducto {
+  id         Int      @id @default(autoincrement())
+  url        String
+  orden      Int      @default(0)
+  productoId Int
+  producto   Producto @relation(fields: [productoId], references: [id])
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model Carrito {
+  id        Int      @id @default(autoincrement())
+  cliente   String
+  telefono  String?
+  direccion String?
+  notas     String?
+  estado    String   @default("pendiente")
+  tiendaId  Int
+  tienda    Tienda   @relation(fields: [tiendaId], references: [id])
+  items     CarritoItem[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  precio Decimal?
+}
+
+model CarritoItem {
+  id         Int     @id @default(autoincrement())
+  cantidad   Int     @default(1)
+  productoId Int
+  producto   Producto @relation(fields: [productoId], references: [id])
+  carritoId  Int
+  carrito    Carrito  @relation(fields: [carritoId], references: [id])
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+   precio Decimal?
+}
+
+
+model Usuario {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  password  String
+  nombre    String
+  apellido  String?
+  rol       Rol      @default(USER)
+  activo    Boolean  @default(true)
+  tiendas   UsuarioTienda[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  movimientoInventario MovimientoInventario[]
+  costureros Costurero[]
+  transferencias TransferenciaInventario[]
+   sucursales UsuarioSucursal[]
+}
+model UsuarioTienda {
+  id        Int      @id @default(autoincrement())
+  usuarioId Int
+  usuario   Usuario @relation(fields: [usuarioId], references: [id])
+  tiendaId  Int
+  tienda    Tienda  @relation(fields: [tiendaId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([usuarioId, tiendaId])
+}
+model UsuarioSucursal {
+  id          Int      @id @default(autoincrement())
+  usuarioId   Int
+  usuario     Usuario  @relation(fields: [usuarioId], references: [id])
+  sucursalId  Int
+  sucursal    Sucursal @relation(fields: [sucursalId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([usuarioId, sucursalId])
+}
+
+enum Rol {
+  ADMIN
+  MANAGER
+  USER
+  COSTURERO
+}
+
+model Venta {
+  id          Int         @id @default(autoincrement())
+  numeroVenta String      @unique
+  cliente     String
+  telefono    String?
+  direccion   String?
+  estado      EstadoVenta @default(PENDIENTE)
+  total       Decimal
+  subtotal    Decimal
+  impuestos   Decimal?
+  metodoPago  MetodoPago?
+  tiendaId    Int
+  tienda      Tienda      @relation(fields: [tiendaId], references: [id])
+  items       VentaItem[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  movimientoInventario MovimientoInventario[]
+  sucursalId  Int?
+  sucursal    Sucursal?   @relation(fields: [sucursalId], references: [id])
+}
+
+model VentaItem {
+  id         Int      @id @default(autoincrement())
+  cantidad   Int      @default(1)
+  precio     Decimal
+  productoId Int
+  producto   Producto @relation(fields: [productoId], references: [id])
+  ventaId    Int
+  venta      Venta    @relation(fields: [ventaId], references: [id])
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+enum EstadoVenta {
+  PENDIENTE
+  CONFIRMADA
+  EN_PROCESO
+  ENVIADA
+  ENTREGADA
+  CANCELADA
+}
+
+enum MetodoPago {
+  EFECTIVO
+  TARJETA
+  TRANSFERENCIA
+  DIGITAL
+}
+// INVENTARIO PRINCIPAL (FÁBRICA/TIENDA PRINCIPAL)
+
+model InventarioTienda {
+  id          Int      @id @default(autoincrement())
+  productoId  Int
+  producto    Producto @relation(fields: [productoId], references: [id], map: "fk_inv_tienda_producto")
+  tiendaId    Int
+  tienda      Tienda   @relation(fields: [tiendaId], references: [id], map: "fk_inv_tienda_tienda")
+  stock       Int      @default(0)
+  stockMinimo Int      @default(5)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  movimientoInventario MovimientoInventario[]
+
+  @@unique([productoId, tiendaId])
+}
+// INVENTARIO DE SUCURSALES
+model InventarioSucursal {
+  id          Int      @id @default(autoincrement())
+  productoId  Int
+  producto    Producto @relation(fields: [productoId], references: [id], map: "fk_inv_sucursal_producto")
+  sucursalId  Int
+  sucursal    Sucursal @relation(fields: [sucursalId], references: [id], map: "fk_inv_sucursal_sucursal")
+  stock       Int      @default(0)
+  stockMinimo Int      @default(5)
+  tiendaId    Int
+  tienda      Tienda   @relation(fields: [tiendaId], references: [id], map: "fk_inv_sucursal_tienda")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  movimientoInventario MovimientoInventario[]
+
+  @@unique([productoId, sucursalId])
+}
+// MODELO SIMPLIFICADO PARA TRANSFERENCIAS
+model TransferenciaInventario {
+  id          Int         @id @default(autoincrement())
+  codigo      String      @unique
+  estado      EstadoTransferencia @default(PENDIENTE)
+  motivo      String?
+  
+  // INFORMACIÓN BÁSICA DE ORIGEN
+  origenTipo  TipoOrigenTransferencia
+  origenId    Int  // Puede ser tiendaId o sucursalId según origenTipo
+  
+  // INFORMACIÓN BÁSICA DE DESTINO
+  destinoTipo TipoDestinoTransferencia
+  destinoId   Int  // Puede ser tiendaId o sucursalId según destinoTipo
+  
+  cantidad    Int
+  productoId  Int
+  producto    Producto @relation(fields: [productoId], references: [id], map: "fk_transferencia_producto")
+  usuarioId   Int
+  usuario     Usuario  @relation(fields: [usuarioId], references: [id], map: "fk_transferencia_usuario")
+  
+  movimientos MovimientoInventario[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// MOVIMIENTOS SEPARADOS PARA CADA TIPO DE INVENTARIO
+model MovimientoInventario {
+  id          Int                @id @default(autoincrement())
+  tipo        TipoMovimiento
+  cantidad    Int
+  productoId  Int
+  producto    Producto           @relation(fields: [productoId], references: [id], map: "fk_movimiento_producto")
+  motivo      String?
+  usuarioId   Int?
+  usuario     Usuario?           @relation(fields: [usuarioId], references: [id], map: "fk_movimiento_usuario")
+  
+  // Para movimientos de COMPRA (entrada a fábrica)
+  compraId    Int?
+  compra      CompraProveedor?   @relation(fields: [compraId], references: [id], map: "fk_movimiento_compra")
+  
+  // Para movimientos de VENTA (salida desde sucursal)
+  ventaId     Int?
+  venta       Venta?             @relation(fields: [ventaId], references: [id], map: "fk_movimiento_venta")
+  
+  // Para movimientos de PRODUCCIÓN (entrada a fábrica)
+  trabajoFinalizadoId Int?
+  trabajoFinalizado TrabajoFinalizado? @relation(fields: [trabajoFinalizadoId], references: [id], map: "fk_movimiento_trabajo")
+  
+  // Para TRANSFERENCIAS
+  transferenciaId Int?
+  transferencia   TransferenciaInventario? @relation(fields: [transferenciaId], references: [id], map: "fk_movimiento_transferencia")
+  
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  
+  // Stock antes y después del movimiento
+  stockAnterior Int?
+  stockNuevo    Int?
+  
+  // UBICACIÓN DEL MOVIMIENTO (solo una de estas por movimiento)
+  inventarioTiendaId Int?
+  inventarioTienda   InventarioTienda? @relation(fields: [inventarioTiendaId], references: [id], map: "fk_movimiento_inv_tienda")
+  
+  inventarioSucursalId Int?
+  inventarioSucursal   InventarioSucursal? @relation(fields: [inventarioSucursalId], references: [id], map: "fk_movimiento_inv_sucursal")
+}
+enum TipoMovimiento {
+  ENTRADA_COMPRA       // Entrada por compra a fábrica
+  ENTRADA_PRODUCCION   // Entrada por producción terminada a fábrica
+  SALIDA_VENTA         // Salida por venta desde sucursal
+  AJUSTE_FABRICA       // Ajuste de inventario en fábrica
+  AJUSTE_SUCURSAL      // Ajuste de inventario en sucursal
+  TRANSFERENCIA_ENTRADA  // Entrada por transferencia
+  TRANSFERENCIA_SALIDA   // Salida por transferencia
+}
+
+enum EstadoTransferencia {
+  PENDIENTE
+  EN_TRANSITO
+  COMPLETADA
+  CANCELADA
+}
+
+enum TipoOrigenTransferencia {
+  FABRICA
+  SUCURSAL
+}
+
+enum TipoDestinoTransferencia {
+  FABRICA
+  SUCURSAL
+}
+
+model Proveedor {
+  id          Int               @id @default(autoincrement())
+  nombre      String
+ telefono    String?
+  email       String?
+  direccion   String?
+  nit String?
+   ruc         String?    
+   ciudad String?
+   pais String?
+  contacto    String?
+ 
+       
+  activo      Boolean           @default(true)
+  productos   Producto[]
+  compras     CompraProveedor[]
+  tiendas     ProveedorTienda[]
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  telas       Tela[]
+  inventarioTelas InventarioTela[]
+}
+
+model ProveedorTienda {
+  id          Int       @id @default(autoincrement())
+  proveedorId Int
+  proveedor   Proveedor @relation(fields: [proveedorId], references: [id])
+  tiendaId    Int
+  tienda      Tienda    @relation(fields: [tiendaId], references: [id])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([proveedorId, tiendaId])
+}
+
+model CompraProveedor {
+  id          Int         @id @default(autoincrement())
+  numeroCompra String     @unique
+  proveedorId Int
+  proveedor   Proveedor  @relation(fields: [proveedorId], references: [id])
+  estado      EstadoCompra @default(PENDIENTE)
+  total       Decimal
+  subtotal    Decimal
+  impuestos   Decimal?
+  fechaEntrega DateTime?
+  movimientos MovimientoInventario[]
+  items       CompraItem[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  itemsTela   CompraTelaItem[]
+}
+
+model CompraItem {
+  id         Int            @id @default(autoincrement())
+  cantidad   Int            @default(1)
+  precio     Decimal
+  productoId Int
+  producto   Producto       @relation(fields: [productoId], references: [id])
+  compraId   Int
+  compra     CompraProveedor @relation(fields: [compraId], references: [id])
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+}
+
+enum EstadoCompra {
+  PENDIENTE
+  CONFIRMADA
+  EN_CAMINO
+  RECIBIDA
+  CANCELADA
+}
+
+// NUEVOS MODELOS PARA PRODUCCIÓN Y TELAS
+
+model Tela {
+  id            Int       @id @default(autoincrement())
+  estado        String?
+  nombreComercial String
+  tipoTela      String
+  composicion   String
+  gramaje       Float
+  acabado       String?
+  rendimiento   Float?
+  colores       String?
+  nota          String?
+  proveedorId   Int?
+  proveedor     Proveedor? @relation(fields: [proveedorId], references: [id])
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  inventarioTelas InventarioTela[]
+  parametrosTelas ParametrosTela[]
+  // Relación con los parámetros físicos de la tela
+   parametrosFisicosId   Int?  // ← Una tela tiene UN parámetro
+  parametrosFisicos     ParametrosFisicosTela? @relation(fields: [parametrosFisicosId], references: [id])
+
+  compraTelaItem CompraTelaItem[]
+}
+
+// NUEVA TABLA INDEPENDIENTE PARA PARÁMETROS FÍSICOS DE TELA
+model ParametrosFisicosTela {
+  id          Int      @id @default(autoincrement())
+  anchoTela   Float
+  tubular     Boolean  @default(false)
+  notasTela   String?
+    // Relación opcional con Tela (uno a uno)
+  telas       Tela[]  
+  
+  // Campos adicionales para identificar independientemente
+  nombre      String   @unique
+  descripcion String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model InventarioTela {
+  id           Int       @id @default(autoincrement())
+  proveedorId  Int
+  proveedor    Proveedor @relation(fields: [proveedorId], references: [id])
+  telaId       Int
+  tela         Tela      @relation(fields: [telaId], references: [id])
+  cantidadRollos Int
+  presentacion String
+  tipoTela     String
+  color        String
+  precioKG     Decimal
+  pesoGrupo    Float
+  importe      Decimal
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model CompraTelaItem {
+  id           Int            @id @default(autoincrement())
+  cantidad     Int
+  precioKG     Decimal
+  telaId       Int
+  tela         Tela           @relation(fields: [telaId], references: [id])
+  compraId     Int
+  compra       CompraProveedor @relation(fields: [compraId], references: [id])
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+}
+
+model Costurero {
+  id          Int      @id @default(autoincrement())
+  nombre      String
+  apellido    String
+  telefono    String?
+  email       String?
+  direccion   String?
+  estado      EstadoCosturero @default(ACTIVO)
+  fechaInicio DateTime
+  nota        String?
+  usuarioId   Int?
+  usuario     Usuario? @relation(fields: [usuarioId], references: [id])
+  tiendaId    Int
+  tienda      Tienda   @relation(fields: [tiendaId], references: [id])
+  trabajos    TrabajoEnProceso[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+enum EstadoCosturero {
+  ACTIVO
+  INACTIVO
+  VACACIONES
+}
+
+model ParametrosTela {
+  id                          Int      @id @default(autoincrement())
+  codigoReferencia            String   @unique
+  nombreModelo                String
+  tipoTelaRecomendada         String
+  estadoPrenda                String
+  fotoReferenciaUrl           String?
+  cantidadEstandarPorLote     Int
+  tabla                       String?
+  tallasDisponibles           String
+  consumoTelaPorTalla         Json     // { "S": 1.5, "M": 1.8, "L": 2.0 }
+  consumoTelaPorLote          Float
+  tiempoFabricacionPorUnidad  Float    // en horas
+  tiempoTotalPorLote          Float    // en horas
+  productoId                  Int?
+  producto                    Producto? @relation(fields: [productoId], references: [id])
+  telaId                      Int?
+  tela                        Tela?     @relation(fields: [telaId], references: [id])
+  trabajos                    TrabajoEnProceso[]
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+}
+
+model TrabajoEnProceso {
+  id                Int         @id @default(autoincrement())
+  codigoTrabajo     String      @unique
+  parametrosTelaId  Int
+  parametrosTela    ParametrosTela @relation(fields: [parametrosTelaId], references: [id])
+  costureroId       Int?
+  costurero         Costurero?  @relation(fields: [costureroId], references: [id])
+  estado            EstadoTrabajo @default(PENDIENTE)
+  cantidad          Int
+  fechaInicio       DateTime?
+  fechaFinEstimada  DateTime?
+  fechaFinReal      DateTime?
+  notas             String?
+  tiendaId          Int
+  tienda            Tienda      @relation(fields: [tiendaId], references: [id])
+  trabajoFinalizado TrabajoFinalizado?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+}
+
+enum EstadoTrabajo {
+  PENDIENTE
+  EN_PROCESO
+  PAUSADO
+  COMPLETADO
+  CANCELADO
+}
+
+model TrabajoFinalizado {
+  id                Int              @id @default(autoincrement())
+  trabajoEnProcesoId Int             @unique
+  trabajoEnProceso  TrabajoEnProceso @relation(fields: [trabajoEnProcesoId], references: [id])
+  fechaFinalizacion DateTime
+  cantidadProducida Int
+  calidad           CalidadProducto @default(EXCELENTE)
+  notas             String?
+  tiendaId          Int
+  tienda            Tienda          @relation(fields: [tiendaId], references: [id])
+  movimientosInventario MovimientoInventario[]
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+}
+
+enum CalidadProducto {
+  EXCELENTE
+  BUENA
+  REGULAR
+  DEFECTUOSO
+}
+
+model Sucursal {
+  id          Int      @id @default(autoincrement())
+  nombre      String
+  direccion   String
+  telefono    String?
+  email       String?
+  responsable String?
+  activa      Boolean  @default(true)
+  tiendaId    Int
+  tienda      Tienda   @relation(fields: [tiendaId], references: [id], map: "fk_sucursal_tienda")
+  inventario  InventarioSucursal[]
+  ventas      Venta[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  usuarioSucursal UsuarioSucursal[]
+}
