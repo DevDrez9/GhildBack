@@ -7,91 +7,145 @@ import { FilterProductoDto } from './dto/filter-producto.dto';
 import { PrismaService } from 'src/prisma.service';
 import { Prisma } from 'generated/prisma/client';
 
+
+
+import * as fs from 'fs/promises'; // Usamos fs.promises para operaciones asíncronas
+import * as path from 'path';
+import { v4 as uuidv4 } from 'uuid';
+
+import * as crypto from 'crypto'; // Importación correcta del módulo
+import sharp from 'sharp';
+
+
 @Injectable()
 export class ProductoService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(createProductoDto: CreateProductoDto): Promise<ProductoResponseDto> {
-    const { imagenes, ...productoData } = createProductoDto;
+    private async saveBase64Image(base64Data: string): Promise<string> {
+        // Usamos 'public/uploads/productos' como la ubicación estándar para archivos estáticos
+        const UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads', 'productos');
+        
+        // Asegurarse de que el directorio exista (crea la ruta si no existe)
+        await fs.mkdir(UPLOAD_DIR, { recursive: true });
 
-    // Verificar que la tienda existe
-    const tienda = await this.prisma.tienda.findUnique({
-      where: { id: productoData.tiendaId }
-    });
-
-    if (!tienda) {
-      throw new NotFoundException(`Tienda con ID ${productoData.tiendaId} no encontrada`);
-    }
-
-    // Verificar que la categoría existe
-    const categoria = await this.prisma.categoria.findUnique({
-      where: { id: productoData.categoriaId }
-    });
-
-    if (!categoria) {
-      throw new NotFoundException(`Categoría con ID ${productoData.categoriaId} no encontrada`);
-    }
-
-    // Verificar que la subcategoría existe si se proporciona
-    if (productoData.subcategoriaId) {
-      const subcategoria = await this.prisma.subcategoria.findUnique({
-        where: { id: productoData.subcategoriaId }
-      });
-
-      if (!subcategoria) {
-        throw new NotFoundException(`Subcategoría con ID ${productoData.subcategoriaId} no encontrada`);
-      }
-    }
-
-    // Verificar que el proveedor existe si se proporciona
-    if (productoData.proveedorId) {
-      const proveedor = await this.prisma.proveedor.findUnique({
-        where: { id: productoData.proveedorId }
-      });
-
-      if (!proveedor) {
-        throw new NotFoundException(`Proveedor con ID ${productoData.proveedorId} no encontrado`);
-      }
-    }
-
-    // Verificar si el SKU ya existe
-    if (productoData.sku) {
-      const existingProducto = await this.prisma.producto.findUnique({
-        where: { sku: productoData.sku }
-      });
-
-      if (existingProducto) {
-        throw new ConflictException('El SKU ya está en uso');
-      }
-    }
-
-    try {
-      const producto = await this.prisma.producto.create({
-        data: {
-          ...productoData,
-          imagenes: imagenes ? {
-            create: imagenes
-          } : undefined
-        },
-        include: {
-          categoria: true,
-          subcategoria: true,
-          tienda: true,
-          proveedor: true,
-          imagenes: true
+        // 1. Obtener el buffer de datos (ignorando el prefijo "data:...")
+        const parts = base64Data.split(';base64,');
+        if (parts.length !== 2) {
+            // Error más descriptivo para el cliente
+            throw new Error("Formato Base64 inválido. Asegúrese de que el encabezado (ej: data:image/jpeg;base64,...) esté incluido.");
         }
-      });
+        // Usamos parts[1] para el contenido Base64 puro
+        const imageBuffer = Buffer.from(parts[1], 'base64');
 
-      return new ProductoResponseDto(producto);
-    } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError) {
-        if (error.code === 'P2002') {
-          throw new ConflictException('El SKU ya está en uso');
+        // 2. Generar un nombre de archivo único con extensión .webp
+        // CORREGIDO: Uso de 'crypto' para resolver el error de tipado
+        const uniqueId = crypto.randomBytes(16).toString('hex'); 
+        const filename = `${uniqueId}.webp`; // Forzamos la extensión .webp para el archivo guardado
+        const filePath = path.join(UPLOAD_DIR, filename);
+
+        try {
+            // 3. PROCESAR: Usar sharp para convertir el buffer a WebP y guardar en disco
+            // CORREGIDO: Uso del prefijo 'sharp'
+            await sharp(imageBuffer)
+                .webp({ quality: 85 }) // Convertir a WebP con calidad 85 para optimización
+                .toFile(filePath);
+            
+            // 4. Devolver solo el nombre del archivo para almacenar en la base de datos
+            return filename; 
+
+        } catch (error) {
+            console.error('Error al procesar la imagen con sharp:', error);
+            // Propagar un error amigable
+            throw new Error('Error al procesar y guardar la imagen. Verifique los datos de la imagen.');
         }
-      }
-      throw error;
     }
-  }
+
+
+    async create(createProductoDto: CreateProductoDto): Promise<ProductoResponseDto> {
+        // NOTA: La variable 'imagenes' se mantiene, pero se corrige el uso en el bloque 'create'
+        const { imagenes, ...productoData } = createProductoDto;
+
+        // --- Bloque de verificaciones (sin cambios) ---
+        const tienda = await this.prisma.tienda.findUnique({ where: { id: productoData.tiendaId } });
+        if (!tienda) {
+            throw new NotFoundException(`Tienda con ID ${productoData.tiendaId} no encontrada`);
+        }
+
+        const categoria = await this.prisma.categoria.findUnique({ where: { id: productoData.categoriaId } });
+        if (!categoria) {
+            throw new NotFoundException(`Categoría con ID ${productoData.categoriaId} no encontrada`);
+        }
+
+        if (productoData.subcategoriaId) {
+            const subcategoria = await this.prisma.subcategoria.findUnique({ where: { id: productoData.subcategoriaId } });
+            if (!subcategoria) {
+                throw new NotFoundException(`Subcategoría con ID ${productoData.subcategoriaId} no encontrada`);
+            }
+        }
+
+        if (productoData.proveedorId) {
+            const proveedor = await this.prisma.proveedor.findUnique({ where: { id: productoData.proveedorId } });
+            if (!proveedor) {
+                throw new NotFoundException(`Proveedor con ID ${productoData.proveedorId} no encontrado`);
+            }
+        }
+
+        if (productoData.sku) {
+            const existingProducto = await this.prisma.producto.findUnique({ where: { sku: productoData.sku } });
+            if (existingProducto) {
+                throw new ConflictException('El SKU ya está en uso');
+            }
+        }
+        // --- Fin Bloque de verificaciones ---
+
+        let imagenDataForPrisma: { url: string, orden?: number }[] = [];
+        
+        if (imagenes && imagenes.length > 0) {
+            const imagePromises = imagenes.map(async (imageRequest: CreateImagenProductoDto) => {
+                
+                // 1. GUARDAR Y OBTENER SOLO EL NOMBRE DEL ARCHIVO (EJ: 'abc.webp')
+                const filename = await this.saveBase64Image(imageRequest.url);
+                
+                // 2. Devolver un objeto con el nombre del archivo y el orden
+                return {
+                    url: filename, // Se guarda el nombre del archivo para la BD
+                    orden: imageRequest.orden 
+                };
+            });
+
+            // Esperar a que todas las URLs se generen
+            imagenDataForPrisma = await Promise.all(imagePromises); 
+        }
+
+        try {
+            // Se utiliza imagenDataForPrisma, que contiene los nombres de archivo cortos
+            const producto = await this.prisma.producto.create({
+                data: {
+                    ...productoData,
+                    imagenes: imagenDataForPrisma.length > 0 ? {
+                        // ¡BUG CORREGIDO! Se usa imagenDataForPrisma que contiene los nombres de archivo.
+                        create: imagenDataForPrisma 
+                    } : undefined
+                },
+                include: {
+                    categoria: true,
+                    subcategoria: true,
+                    tienda: true,
+                    proveedor: true,
+                    imagenes: true // Incluye las imágenes para la respuesta
+                }
+            });
+
+            return new ProductoResponseDto(producto);
+        } catch (error) {
+            if (error instanceof Prisma.PrismaClientKnownRequestError) {
+                if (error.code === 'P2002') {
+                    throw new ConflictException('El SKU ya está en uso');
+                }
+            }
+            throw error;
+        }
+    }
 
 async findAll(filterProductoDto: FilterProductoDto = {}): Promise<{ productos: ProductoResponseDto[], total: number }> {
     const {

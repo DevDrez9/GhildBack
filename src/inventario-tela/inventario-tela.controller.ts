@@ -24,6 +24,11 @@ export class InventarioTelaController {
   create(@Body() createInventarioTelaDto: CreateInventarioTelaDto) {
     return this.inventarioTelaService.create(createInventarioTelaDto);
   }
+   @Post("/many")
+  @HttpCode(HttpStatus.CREATED)
+  createMany(@Body() createInventarioTelaDto: CreateInventarioTelaDto[]) {
+    return this.inventarioTelaService.createMany(createInventarioTelaDto);
+  }
 
   @Get()
   findAll(

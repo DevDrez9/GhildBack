@@ -3,7 +3,7 @@ import { Type } from 'class-transformer';
 
 export class CreateImagenProductoDto {
   @IsString()
-  url!: string;
+  url!: string; 
 
   @IsNumber()
   @IsOptional()
@@ -18,10 +18,10 @@ export class CreateProductoDto {
   @IsOptional()
   descripcion?: string;
 
-  @IsDecimal()
+  @IsNumber()
   precio!: number;
 
-  @IsDecimal()
+  @IsNumber()
   @IsOptional()
   precioOferta?: number;
 

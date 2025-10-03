@@ -6,7 +6,7 @@ import { UpdateEstadoTransferenciaDto } from './dto/update-estado-transferencia.
 import { TransferenciaInventarioResponseDto } from './dto/transferencia-inventario-response.dto';
 import { FilterTransferenciaInventarioDto } from './dto/filter-transferencia-inventario.dto';
 import { PrismaService } from 'src/prisma.service';
-import { Prisma, TipoDestinoTransferencia, TipoOrigenTransferencia } from 'generated/prisma/client';
+import { EstadoTransferencia, Prisma, TipoDestinoTransferencia, TipoOrigenTransferencia } from 'generated/prisma/client';
 
 @Injectable()
 export class TransferenciaInventarioService {
@@ -110,93 +110,182 @@ export class TransferenciaInventarioService {
     return null;
   }
 
-  async create(createTransferenciaInventarioDto: CreateTransferenciaInventarioDto): Promise<TransferenciaInventarioResponseDto> {
-    const { codigo, usuarioId, productoId, ...transferenciaData } = createTransferenciaInventarioDto;
+   async create(createTransferenciaInventarioDto: CreateTransferenciaInventarioDto): Promise<TransferenciaInventarioResponseDto> {
+        const { 
+            codigo, 
+            usuarioId, 
+            productoId, 
+            origenTipo, 
+            destinoTipo, 
+            origenId, 
+            destinoId, 
+            cantidad, 
+            motivo,
+            ...transferenciaData 
+        } = createTransferenciaInventarioDto;
 
-    // Verificar que el producto existe
-    const producto = await this.prisma.producto.findUnique({
-      where: { id: productoId }
-    });
-
-    if (!producto) {
-      throw new NotFoundException(`Producto con ID ${productoId} no encontrado`);
-    }
-
-    // Verificar que el usuario existe
-    const usuario = await this.prisma.usuario.findUnique({
-      where: { id: usuarioId }
-    });
-
-    if (!usuario) {
-      throw new NotFoundException(`Usuario con ID ${usuarioId} no encontrado`);
-    }
-
-    // Validar stock en el origen
-    await this.validarStockOrigen(
-      transferenciaData.origenTipo,
-      transferenciaData.origenId,
-      productoId,
-      transferenciaData.cantidad
-    );
-
-    // Validar que origen y destino no sean el mismo
-    if (transferenciaData.origenTipo === transferenciaData.destinoTipo && 
-        transferenciaData.origenId === transferenciaData.destinoId) {
-      throw new BadRequestException('El origen y el destino no pueden ser el mismo');
-    }
-
-    // Generar código de transferencia
-    const codigoTransferencia = codigo || await this.generarCodigoTransferencia();
-
-    try {
-      const transferencia = await this.prisma.transferenciaInventario.create({
-        data: {
-          ...transferenciaData,
-          codigo: codigoTransferencia,
-          producto: { connect: { id: productoId } },
-          usuario: { connect: { id: usuarioId } }
-        },
-        include: {
-          producto: {
-            include: {
-              categoria: true,
-              imagenes: {
-                take: 1,
-                orderBy: { orden: 'asc' }
-              }
-            }
-          },
-          usuario: {
-            select: {
-              id: true,
-              nombre: true,
-              email: true
-            }
-          },
-          movimientos: true
+        // -------------------------------------------------------------------
+        // 1. Validar si la función debe ejecutar la transferencia de stock
+        // -------------------------------------------------------------------
+        if (origenTipo !== 'FABRICA' || destinoTipo !== 'SUCURSAL') {
+            throw new BadRequestException('Esta función de creación solo soporta transferencias de TIENDA a SUCURSAL.');
         }
-      });
 
-      // Obtener detalles de origen y destino
-      const [origen, destino] = await Promise.all([
-        this.obtenerEntidadOrigen(transferencia.origenTipo, transferencia.origenId),
-        this.obtenerEntidadDestino(transferencia.destinoTipo, transferencia.destinoId)
-      ]);
-
-      return new TransferenciaInventarioResponseDto({
-        ...transferencia,
-        origen,
-        destino
-      });
-    } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError) {
-        if (error.code === 'P2002') {
-          throw new ConflictException('Error al crear la transferencia');
+        if (cantidad <= 0) {
+            throw new BadRequestException('La cantidad de transferencia debe ser mayor a cero');
         }
-      }
-      throw error;
+
+        // -------------------------------------------------------------------
+        // 2. Obtener y validar entidades (Producto, Usuario, Inventarios)
+        // -------------------------------------------------------------------
+
+        const [producto, usuario, inventarioOrigen, inventarioDestino] = await Promise.all([
+            this.prisma.producto.findUnique({ where: { id: productoId } }),
+            this.prisma.usuario.findUnique({ where: { id: usuarioId } }),
+            // Obtener inventario de la Tienda (Origen)
+            this.prisma.inventarioTienda.findUnique({ where: { id: origenId } }),
+            // Obtener inventario de la Sucursal (Destino)
+            this.prisma.inventarioSucursal.findUnique({ where: { id: destinoId } }), 
+        ]);
+
+        if (!producto) {
+            throw new NotFoundException(`Producto con ID ${productoId} no encontrado`);
+        }
+        if (!usuario) {
+            throw new NotFoundException(`Usuario con ID ${usuarioId} no encontrado`);
+        }
+        if (!inventarioOrigen) {
+            throw new NotFoundException(`Inventario de Tienda (Origen) con ID ${origenId} no encontrado`);
+        }
+        if (!inventarioDestino) {
+            throw new NotFoundException(`Inventario de Sucursal (Destino) con ID ${destinoId} no encontrado`);
+        }
+
+        // -------------------------------------------------------------------
+        // 3. Validar consistencia y stock
+        // -------------------------------------------------------------------
+
+        if (inventarioOrigen.productoId !== inventarioDestino.productoId) {
+             throw new BadRequestException('Solo se pueden transferir el mismo producto');
+        }
+
+        if (inventarioOrigen.stock < cantidad) {
+            throw new BadRequestException('Stock insuficiente en el inventario de origen (Tienda)');
+        }
+
+        // -------------------------------------------------------------------
+        // 4. Ejecutar Transferencia y Transacción de Base de Datos
+        // -------------------------------------------------------------------
+        
+        const codigoTransferencia = codigo || await this.generarCodigoTransferencia();
+
+        try {
+            const resultadoTransaccion = await this.prisma.$transaction(async (prisma) => {
+                
+                // 4.1. Crear el registro de Transferencia (con estado final)
+                const transferencia = await prisma.transferenciaInventario.create({
+                    data: {
+                        ...transferenciaData,
+                        origenTipo,
+                        destinoTipo,
+                        origenId,
+                        destinoId,
+                        cantidad,
+                        codigo: codigoTransferencia,
+                        // El estado se marca como COMPLETADA, ya que el stock se modifica
+                        estado: EstadoTransferencia.COMPLETADA, 
+                        producto: { connect: { id: productoId } },
+                        usuario: { connect: { id: usuarioId } }
+                    },
+                    // Incluir datos para el DTO final
+                    include: {
+                         producto: {
+                            include: {
+                                categoria: true,
+                                imagenes: { take: 1, orderBy: { orden: 'asc' } }
+                            }
+                        },
+                        usuario: {
+                            select: { id: true, nombre: true, email: true }
+                        },
+                        movimientos: true
+                    }
+                });
+
+                // 4.2. Restar stock del origen (InventarioTienda)
+                const origenActualizado = await prisma.inventarioTienda.update({
+                    where: { id: origenId },
+                    data: {
+                        stock: { decrement: cantidad }
+                    }
+                });
+
+                // 4.3. Sumar stock al destino (InventarioSucursal) <-- CAMBIO CRUCIAL
+                const destinoActualizado = await prisma.inventarioSucursal.update({ 
+                    where: { id: destinoId },
+                    data: {
+                        stock: { increment: cantidad }
+                    }
+                });
+
+                // 4.4. Registrar movimiento de salida (Desde InventarioTienda)
+                await prisma.movimientoInventario.create({
+                    data: {
+                        tipo: 'TRANSFERENCIA_SALIDA',
+                        cantidad: cantidad,
+                        productoId: productoId,
+                        motivo: `Salida por Transferencia a Sucursal #${destinoId}: ${motivo}`,
+                        usuarioId: usuarioId,
+                        inventarioTiendaId: origenId, 
+                        stockAnterior: inventarioOrigen.stock,
+                        stockNuevo: origenActualizado.stock,
+                        transferenciaId: transferencia.id // Vincular a la transferencia creada
+                    }
+                });
+
+                // 4.5. Registrar movimiento de entrada (A InventarioSucursal) <-- CAMBIO CRUCIAL
+                await prisma.movimientoInventario.create({
+                    data: {
+                        tipo: 'TRANSFERENCIA_ENTRADA',
+                        cantidad: cantidad,
+                        productoId: productoId,
+                        motivo: `Entrada por Transferencia desde Tienda #${origenId}: ${motivo}`,
+                        usuarioId: usuarioId,
+                        inventarioSucursalId: destinoId, // Usar el campo Sucursal
+                        stockAnterior: inventarioDestino.stock,
+                        stockNuevo: destinoActualizado.stock,
+                        transferenciaId: transferencia.id // Vincular a la transferencia creada
+                    }
+                });
+                
+                return transferencia;
+            });
+            
+            // -------------------------------------------------------------------
+            // 5. Preparar la respuesta DTO
+            // -------------------------------------------------------------------
+            
+            // Obtener detalles de origen y destino para el DTO de respuesta
+            const [origen, destino] = await Promise.all([
+                this.obtenerEntidadOrigen(resultadoTransaccion.origenTipo, resultadoTransaccion.origenId),
+                this.obtenerEntidadDestino(resultadoTransaccion.destinoTipo, resultadoTransaccion.destinoId)
+            ]);
+
+            return new TransferenciaInventarioResponseDto({
+                ...resultadoTransaccion,
+                origen,
+                destino
+            });
+
+        } catch (error) {
+            if (error instanceof Prisma.PrismaClientKnownRequestError) {
+                if (error.code === 'P2002') {
+                    throw new ConflictException('Error al crear la transferencia (código duplicado o conflicto)');
+                }
+            }
+            throw error;
+        }
     }
-  }
 
   async findAll(filterTransferenciaInventarioDto: FilterTransferenciaInventarioDto = {}): Promise<{ transferencias: TransferenciaInventarioResponseDto[], total: number }> {
     const {

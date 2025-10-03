@@ -8,6 +8,7 @@ import { FilterInventarioTiendaDto } from './dto/filter-inventario-tienda.dto';
 import { DecimalUtil } from '../utils/decimal.util';
 import { PrismaService } from 'src/prisma.service';
 import { Prisma } from 'generated/prisma/client';
+import { InventarioSucursalResponseDto } from 'src/inventario-sucursal/dto/inventario-sucursal-response.dto';
 
 @Injectable()
 export class InventarioTiendaService {
@@ -468,6 +469,105 @@ async findAll(filterInventarioTiendaDto: FilterInventarioTiendaDto = {}): Promis
     }
   }
 
+async transferirStockSucursal(
+    origenId: number, // ID del InventarioTienda (Origen)
+    destinoId: number, // ID del InventarioSucursal (Destino)
+    cantidad: number,
+    motivo: string,
+    usuarioId?: number
+): Promise<any> {
+    
+    // --- Validaciones Iniciales ---
+    if (cantidad <= 0) {
+        throw new BadRequestException('La cantidad de transferencia debe ser mayor a cero');
+    }
+    
+    // Al ser transferencias Tienda -> Sucursal, no es necesario validar origenId === destinoId
+
+    // --- Obtener Inventarios ---
+    const [inventarioOrigen, inventarioDestino] = await Promise.all([
+        // Origen (Siempre Tienda): Asumo que this.findOne busca en InventarioTienda
+        this.findOne(origenId), 
+        // Destino (Siempre Sucursal): Necesitas un método que busque en InventarioSucursal
+        this.findOneSucursal(destinoId) 
+    ]);
+    
+    // --- Validaciones de Inventario ---
+
+    // 1. Validar que el producto sea el mismo
+    if (inventarioOrigen.productoId !== inventarioDestino.productoId) {
+        throw new BadRequestException('Solo se pueden transferir el mismo producto');
+    }
+
+    // 2. Validar stock suficiente en el origen (Tienda)
+    if (inventarioOrigen.stock < cantidad) {
+        throw new BadRequestException('Stock insuficiente en el inventario de origen (Tienda)');
+    }
+    
+    // No se requiere validación de 'misma tienda' ya que es Tienda a Sucursal.
+
+    // --- Transacción de Stock ---
+    try {
+        return await this.prisma.$transaction(async (prisma) => {
+            
+            // 1. Restar stock del origen (InventarioTienda)
+            const origenActualizado = await prisma.inventarioTienda.update({
+                where: { id: origenId },
+                data: {
+                    stock: { decrement: cantidad }
+                }
+            });
+
+            // 2. Sumar stock al destino (InventarioSucursal) <-- CAMBIO CRUCIAL
+            const destinoActualizado = await prisma.inventarioSucursal.update({ 
+                where: { id: destinoId },
+                data: {
+                    stock: { increment: cantidad }
+                }
+            });
+
+            // 3. Registrar movimiento de salida (Desde InventarioTienda)
+            await prisma.movimientoInventario.create({
+                data: {
+                    tipo: 'TRANSFERENCIA_SALIDA',
+                    cantidad: cantidad,
+                    productoId: inventarioOrigen.productoId,
+                    motivo: `Transferencia a Sucursal #${destinoId}: ${motivo}`,
+                    usuarioId: usuarioId,
+                    inventarioTiendaId: origenId, // Referencia al origen (Tienda)
+                    stockAnterior: inventarioOrigen.stock,
+                    stockNuevo: origenActualizado.stock
+                }
+            });
+
+            // 4. Registrar movimiento de entrada (A InventarioSucursal) <-- CAMBIO CRUCIAL
+            await prisma.movimientoInventario.create({
+                data: {
+                    tipo: 'TRANSFERENCIA_ENTRADA',
+                    cantidad: cantidad,
+                    productoId: inventarioDestino.productoId,
+                    motivo: `Transferencia desde Tienda #${origenId}: ${motivo}`,
+                    usuarioId: usuarioId,
+                    inventarioSucursalId: destinoId, // Referencia al destino (Sucursal)
+                    // inventarioTiendaId: null, // Si es un campo requerido, establece null explícitamente si tu esquema lo permite
+                    stockAnterior: inventarioDestino.stock,
+                    stockNuevo: destinoActualizado.stock
+                }
+            });
+
+            return {
+                message: 'Transferencia Tienda a Sucursal realizada exitosamente',
+                origen: new InventarioTiendaResponseDto(origenActualizado),
+                destino: destinoActualizado, // Usar el DTO de Sucursal si lo tienes
+                cantidad
+            };
+        });
+    } catch (error) {
+        console.error(error); 
+        throw new ConflictException('Error al transferir el stock');
+    }
+}
+
  async getProductosBajoStock(tiendaId?: number, stockMinimo?: number): Promise<{ inventarios: InventarioTiendaResponseDto[], total: number }> {
     const where: Prisma.InventarioTiendaWhereInput = {
       stock: { gt: 0 } // Solo productos con stock
@@ -627,4 +727,46 @@ async getEstadisticas(tiendaId?: number): Promise<any> {
       limit
     };
   }
+
+  
+    async findOneSucursal(id: number): Promise<InventarioSucursalResponseDto> {
+      const inventario = await this.prisma.inventarioSucursal.findUnique({
+        where: { id },
+        include: {
+          producto: {
+            include: {
+              categoria: true,
+              subcategoria: true,
+              imagenes: true,
+              proveedor: true
+            }
+          },
+          sucursal: {
+            include: {
+              tienda: true
+            }
+          },
+          tienda: true,
+          movimientoInventario: {
+            take: 10,
+            orderBy: { createdAt: 'desc' },
+            include: {
+              usuario: {
+                select: {
+                  id: true,
+                  nombre: true,
+                  email: true
+                }
+              }
+            }
+          }
+        }
+      });
+  
+      if (!inventario) {
+        throw new NotFoundException(`Inventario con ID ${id} no encontrado`);
+      }
+  
+      return new InventarioSucursalResponseDto(inventario);
+    }
 }

@@ -114,7 +114,24 @@ export class InventarioTiendaController {
       motivo,
       usuarioId
     );
+    
   }
+   @Post('transferir/sucursal/:origenId/:destinoId')
+  transferirStockSucursal(
+    @Param('origenId') origenId: string,
+    @Param('destinoId') destinoId: string,
+    @Query('cantidad') cantidad: string,
+    @Query('motivo') motivo: string,
+    @Request() req
+  ) {
+    const usuarioId = req.user?.userId;
+    return this.inventarioTiendaService.transferirStockSucursal(
+      +origenId,
+      +destinoId,
+      +cantidad,
+      motivo,
+      usuarioId
+    );}
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
