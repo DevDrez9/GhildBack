@@ -27,6 +27,8 @@ import { TrabajosModule } from './produccion/trabajos/trabajos.module';
 import { TrabajosFinalizadosModule } from './produccion/trabajos-finalizados/trabajos-finalizados.module';
 import { ConfigModule } from '@nestjs/config';
 import { InventarioTelaModule } from './inventario-tela/inventario-tela.module';
+import { ServeStaticModule } from '@nestjs/serve-static';
+import { join } from 'path';
 
 
 @Module({
@@ -39,6 +41,10 @@ import { InventarioTelaModule } from './inventario-tela/inventario-tela.module';
       envFilePath: '.env',
       cache: true,
     }),
-    InventarioTelaModule,],
+    InventarioTelaModule,
+  ServeStaticModule.forRoot({
+      rootPath: join(__dirname, '..', 'public'), // Apunta a 'public'
+    serveRoot: '/', // Sirve desde la raíz de la URL
+    }),],
 })
 export class AppModule {}

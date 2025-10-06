@@ -1,7 +1,7 @@
 import { IsString, IsNumber, IsOptional, IsUrl } from 'class-validator';
 
 export class CreateBannerDto {
-  @IsUrl()
+ @IsString()
   url!: string;
 
   @IsNumber()

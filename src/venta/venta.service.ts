@@ -202,20 +202,26 @@ export class VentaService {
 
   async findAll(filterVentaDto: FilterVentaDto = {}): Promise<{ ventas: VentaResponseDto[], total: number }> {
     const {
-      estado,
-      metodoPago,
-      tiendaId,
-      sucursalId,
-      cliente,
-      numeroVenta,
-      fechaInicio,
-      fechaFin,
-      page = 1,
-      limit = 10
+        estado,
+        metodoPago,
+        tiendaId,
+        sucursalId,
+        cliente,
+        numeroVenta,
+        fechaInicio,
+        fechaFin,
+        // Usamos nombres temporales para los valores sin procesar
+        page: rawPage = 1,
+        limit: rawLimit = 10
     } = filterVentaDto;
 
-    const where: Prisma.VentaWhereInput = {};
+    // 💡 PASO DE CORRECCIÓN: Convertir a números enteros
+    const page = parseInt(rawPage.toString(), 10) || 1;
+    const limit = parseInt(rawLimit.toString(), 10) || 10;
 
+    const where: Prisma.VentaWhereInput = {};
+    
+    // ... (El resto de la lógica 'where' permanece igual) ...
     if (estado) where.estado = estado;
     if (metodoPago) where.metodoPago = metodoPago;
     if (tiendaId) where.tiendaId = tiendaId;
@@ -224,46 +230,47 @@ export class VentaService {
     if (numeroVenta) where.numeroVenta = { contains: numeroVenta};
 
     if (fechaInicio || fechaFin) {
-      where.createdAt = {};
-      if (fechaInicio) where.createdAt.gte = new Date(fechaInicio);
-      if (fechaFin) {
-        const fechaFinDate = new Date(fechaFin);
-        fechaFinDate.setHours(23, 59, 59, 999);
-        where.createdAt.lte = fechaFinDate;
-      }
+        where.createdAt = {};
+        if (fechaInicio) where.createdAt.gte = new Date(fechaInicio);
+        if (fechaFin) {
+            const fechaFinDate = new Date(fechaFin);
+            fechaFinDate.setHours(23, 59, 59, 999);
+            where.createdAt.lte = fechaFinDate;
+        }
     }
 
     const [ventas, total] = await Promise.all([
-      this.prisma.venta.findMany({
-        where,
-        include: {
-          tienda: true,
-          sucursal: true,
-          items: {
+        this.prisma.venta.findMany({
+            where,
             include: {
-              producto: {
-                include: {
-                  imagenes: {
-                    take: 1,
-                    orderBy: { orden: 'asc' }
-                  }
+                tienda: true,
+                sucursal: true,
+                items: {
+                    include: {
+                        producto: {
+                            include: {
+                                imagenes: {
+                                    take: 1,
+                                    orderBy: { orden: 'asc' }
+                                }
+                            }
+                        }
+                    }
                 }
-              }
-            }
-          }
-        },
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit
-      }),
-      this.prisma.venta.count({ where })
+            },
+            orderBy: { createdAt: 'desc' },
+            // El cálculo ahora usa números enteros garantizados
+            skip: (page - 1) * limit,
+            take: limit
+        }),
+        this.prisma.venta.count({ where })
     ]);
 
     return {
-      ventas: ventas.map(venta => new VentaResponseDto(venta)),
-      total
+        ventas: ventas.map(venta => new VentaResponseDto(venta)),
+        total
     };
-  }
+}
 
   async findOne(id: number): Promise<VentaResponseDto> {
     const venta = await this.prisma.venta.findUnique({

@@ -268,6 +268,40 @@ export class InventarioSucursalService {
 
     return new InventarioSucursalResponseDto(inventario);
   }
+    
+   async findBySucursal(sucursalId: number): Promise<InventarioSucursalResponseDto[]> { // <-- Cambio el tipo de retorno a un array
+    
+    // 1. Uso de findMany para obtener todos los registros que coincidan con el filtro
+    const inventarios = await this.prisma.inventarioSucursal.findMany({
+        where: {
+            // 2. Sintaxis correcta para filtrar por el campo sucursalId
+            sucursalId: sucursalId, 
+        },
+        include: {
+            producto: {
+                include: {
+                    categoria: true,
+                    imagenes: {
+                        take: 1,
+                        orderBy: { orden: 'asc' }
+                    }
+                }
+            },
+            sucursal: true,
+            tienda: true
+        }
+    });
+
+    if (!inventarios || inventarios.length === 0) {
+        // En lugar de "No se encontró inventario para el producto...",
+        // indicamos que no hay inventario para esa sucursal.
+        throw new NotFoundException(`No se encontró inventario para la sucursal con ID ${sucursalId}.`);
+    }
+
+    // 3. Mapear la lista de resultados de Prisma a una lista de DTOs de respuesta
+    return inventarios.map(inventario => new InventarioSucursalResponseDto(inventario));
+}
+
 
   async update(id: number, updateInventarioSucursalDto: UpdateInventarioSucursalDto): Promise<InventarioSucursalResponseDto> {
     const inventario = await this.findOne(id);

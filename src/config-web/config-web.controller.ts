@@ -44,11 +44,11 @@ export class ConfigWebController {
     return this.configWebService.update(+id, updateConfigWebDto);
   }
 
-  @Delete(':id')
+ /* @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(@Param('id') id: string) {
     return this.configWebService.remove(+id);
-  }
+  }*/
 
   // Banner endpoints
   @Post(':id/banners')

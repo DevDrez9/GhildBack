@@ -75,6 +75,12 @@ export class InventarioSucursalController {
   ) {
     return this.inventarioSucursalService.findByProductoAndSucursal(+productoId, +sucursalId);
   }
+  @Get('sucursal/:sucursalId')
+  findBySucursal(
+    @Param('sucursalId') sucursalId: string
+  ) {
+    return this.inventarioSucursalService.findBySucursal( +sucursalId);
+  }
 
   @Get(':id')
   findOne(@Param('id') id: string) {

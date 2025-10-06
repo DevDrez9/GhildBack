@@ -10,7 +10,7 @@ export class CreateVentaItemDto {
   @IsNumber()
   cantidad!: number;
 
-  @IsDecimal()
+ @IsNumber()
   precio!: number;
 }
 
@@ -30,13 +30,13 @@ export class CreateVentaDto {
   @IsOptional()
   estado?: EstadoVenta;
 
-  @IsDecimal()
+  @IsNumber()
   total!: number;
 
-  @IsDecimal()
+ @IsNumber()
   subtotal!: number;
 
-  @IsDecimal()
+  @IsNumber()
   @IsOptional()
   impuestos?: number;
 

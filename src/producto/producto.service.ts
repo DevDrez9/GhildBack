@@ -275,42 +275,87 @@ async findAll(filterProductoDto: FilterProductoDto = {}): Promise<{ productos: P
     return new ProductoResponseDto(producto);
   }
 
-  async update(id: number, updateProductoDto: UpdateProductoDto): Promise<ProductoResponseDto> {
-    await this.findOne(id); // Verificar que existe
+ 
+async update(id: number, updateProductoDto: UpdateProductoDto): Promise<ProductoResponseDto> {
+    // 1. Verificar que el producto existe
+    await this.findOne(id); 
 
-    const { imagenes, ...productoData } = updateProductoDto;
+    // 2. Destructurar y establecer valor por defecto para 'imagenes'
+    const { imagenes = [], ...productoData } = updateProductoDto;
+
+    // --- Bloque de validaciones (Ajusta según las validaciones que necesites en el update) ---
+    
+    // Si se actualiza el SKU, verificar que no esté en uso por otro producto
+    if (productoData.sku) {
+        const existingProducto = await this.prisma.producto.findUnique({ where: { sku: productoData.sku } });
+        // Comprobación de que el SKU no esté en uso por otro ID
+        if (existingProducto && existingProducto.id !== id) {
+            throw new ConflictException('El SKU ya está en uso por otro producto');
+        }
+    }
+    // ... (Otras validaciones de IDs foráneos si son necesarias)
+    
+    // --- PROCESAMIENTO DE IMÁGENES ---
+    let imagenDataForPrisma: { url: string, orden?: number }[] = [];
+    
+    if (imagenes.length > 0) {
+        const imagePromises = imagenes.map(async (imageRequest) => {
+            const inputUrl = imageRequest.url; // Contiene Base64 o URL existente
+            let finalUrl = inputUrl; // Inicialmente, usamos la URL de entrada
+            
+            // Comprobación clave: si la URL enviada es una nueva Base64
+            if (inputUrl && inputUrl.startsWith('data:')) {
+                // Guarda la imagen y obtiene la URL final (o nombre de archivo)
+                finalUrl = await this.saveBase64Image(inputUrl);
+            }
+            
+            // Devolver el objeto con la URL final (nueva URL o URL existente) y el orden
+            return {
+                url: finalUrl,
+                orden: imageRequest.orden 
+            };
+        });
+
+        // Esperar a que todas las URLs se generen
+        imagenDataForPrisma = await Promise.all(imagePromises); 
+    }
+    // ------------------------------------
 
     try {
-      const producto = await this.prisma.producto.update({
-        where: { id },
-        data: {
-          ...productoData,
-          ...(imagenes && {
-            imagenes: {
-              deleteMany: {}, // Eliminar imágenes existentes
-              create: imagenes // Crear nuevas imágenes
+        const producto = await this.prisma.producto.update({
+            where: { id },
+            data: {
+                ...productoData,
+                // Aplicar el reemplazo de imágenes solo si se envió el campo 'imagenes'
+                // Nota: `imagenes` en el DTO es opcional. Usamos `updateProductoDto.imagenes !== undefined` 
+                // para saber si el cliente INTENTÓ modificar las imágenes (aunque la lista esté vacía).
+                ...(updateProductoDto.imagenes !== undefined && { 
+                    imagenes: {
+                        deleteMany: {}, // Elimina las imágenes antiguas del producto
+                        create: imagenDataForPrisma // Crea las nuevas imágenes (URLs finales)
+                    }
+                })
+            },
+            include: {
+                categoria: true,
+                subcategoria: true,
+                tienda: true,
+                proveedor: true,
+                imagenes: true
             }
-          })
-        },
-        include: {
-          categoria: true,
-          subcategoria: true,
-          tienda: true,
-          proveedor: true,
-          imagenes: true
-        }
-      });
+        });
 
-      return new ProductoResponseDto(producto);
+        return new ProductoResponseDto(producto);
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError) {
-        if (error.code === 'P2002') {
-          throw new ConflictException('El SKU ya está en uso');
+        if (error instanceof Prisma.PrismaClientKnownRequestError) {
+            if (error.code === 'P2002' && productoData.sku) {
+                // Comprobar si el error P2002 se debe al SKU
+                throw new ConflictException('El SKU ya está en uso');
+            }
         }
-      }
-      throw error;
+        throw error;
     }
-  }
+}
 
   async remove(id: number): Promise<void> {
     await this.findOne(id); // Verificar que existe

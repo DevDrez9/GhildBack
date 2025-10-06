@@ -1,30 +1,211 @@
+// src/config-web/config-web.service.ts
+
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from 'src/prisma.service';
 
 import { CreateConfigWebDto } from './dto/create-config-web.dto';
 import { UpdateConfigWebDto } from './dto/update-config-web.dto';
-import { PrismaService } from 'src/prisma.service';
 import { CreateBannerDto } from './dto/create-banner.dto';
 import { UpdateBannerDto } from './dto/update-banner.dto';
 
+// --- Importaciones de Node.js y UUID ---
+import * as fs from 'fs/promises'; 
+import * as path from 'path';
+import { v4 as uuidv4 } from 'uuid';
+// ----------------------------------------
 
 @Injectable()
 export class ConfigWebService {
   constructor(private readonly prisma: PrismaService) {}
 
+  // --- FUNCIÓN HELPER PARA PROCESAR BASE64 (Reutilizada) ---
+   private async saveBase64Image(base64String: string, subDir: string = ''): Promise<string> {
+    // ... (Tu implementación de saveBase64Image es la misma) ...
+    // ... (Incluye la extracción de MIME, validación, escritura de archivo y retorno de URL) ...
+
+    const parts = base64String.split(';base64,');
+    if (parts.length !== 2) {
+      throw new Error('Formato Base64 inválido. Debe contener el encabezado.');
+    }
+    
+    const mimeTypePart = parts[0].split(':');
+    const mimeType = mimeTypePart.pop(); 
+
+    if (!mimeType) {
+        throw new Error('Tipo MIME no encontrado en la metadata de la imagen Base64.');
+    }
+
+    const mimeTypeParts = mimeType.split('/');
+    const extension = mimeTypeParts.length > 1 ? mimeTypeParts[1] : null;
+
+    if (!extension) {
+        throw new Error(`Extensión no válida para el tipo MIME proporcionado: ${mimeType}.`);
+    }
+    
+    const base64Data = parts[1];
+    const imageBuffer = Buffer.from(base64Data, 'base64');
+
+    const uniqueFileName = `${uuidv4()}.${extension}`;
+    const uploadDir = path.join(process.cwd(), 'public', 'uploads', subDir); 
+    const filePath = path.join(uploadDir, uniqueFileName);
+
+    await fs.mkdir(uploadDir, { recursive: true });
+    await fs.writeFile(filePath, imageBuffer);
+
+    return path.join('/uploads', subDir, uniqueFileName); 
+  }
+  // --------------------------------------------------------
+
+  // --- FUNCIÓN HELPER PARA PROCESAR EL ARREGLO DE BANNERS (Reutilizada) ---
+  private async processBanners(banners: CreateBannerDto[]): Promise<any[]> {
+    const bannerPromises = banners.map(async (bannerDto) => {
+      const inputUrl = bannerDto.url;
+      let finalUrl = inputUrl; // Por defecto, usamos la URL de entrada
+
+      // **COMPROBACIÓN CLAVE:** Si la URL comienza con 'data:', es Base64
+      if (inputUrl && inputUrl.startsWith('data:')) {
+        // Solo llamar a saveBase64Image si es Base64
+        finalUrl = await this.saveBase64Image(inputUrl, 'banners');
+      }
+      
+      return {
+        ...bannerDto,
+        url: finalUrl, // Si era Base64, se reemplaza; si era URL, se mantiene
+      };
+    });
+    return Promise.all(bannerPromises);
+  }
+  // ------------------------------------------------------------------------
+
+  // --- MÉTODO CREATE (Ajustado para logoUrl) ---
   async create(createConfigWebDto: CreateConfigWebDto) {
-    const { banners, ...configData } = createConfigWebDto;
+    const { banners = [], logoUrl, ...configData } = createConfigWebDto;
+
+    let bannerDataForPrisma: any[] = [];
+    if (banners.length > 0) {
+      bannerDataForPrisma = await this.processBanners(banners);
+    }
+    
+    let processedLogoUrl = logoUrl;
+    // **COMPROBACIÓN CLAVE:** Si logoUrl existe y es Base64
+    if (logoUrl && logoUrl.startsWith('data:')) {
+      processedLogoUrl = await this.saveBase64Image(logoUrl, 'logos'); 
+    }
 
     return this.prisma.configWeb.create({
       data: {
         ...configData,
-        banners: banners ? {
-          create: banners
+        logoUrl: processedLogoUrl, 
+        banners: bannerDataForPrisma.length > 0 ? {
+          create: bannerDataForPrisma
         } : undefined
       },
       include: {
         banners: true
       }
     });
+  }
+
+  // ... (findAll, findOne, remove - No necesitan cambios)
+
+  // --- MÉTODO UPDATE (Ajustado para logoUrl) ---
+   async update(id: number, updateConfigWebDto: UpdateConfigWebDto) {
+    await this.findOne(id); 
+
+    const { banners = [], logoUrl, ...configData } = updateConfigWebDto;
+
+    let bannerDataForPrisma: any[] = [];
+    if (banners.length > 0) {
+        bannerDataForPrisma = await this.processBanners(banners);
+    }
+    
+    let processedLogoUrl = logoUrl;
+    // **COMPROBACIÓN CLAVE:** Si logoUrl existe y es Base64
+    if (logoUrl && logoUrl.startsWith('data:')) {
+      processedLogoUrl = await this.saveBase64Image(logoUrl, 'logos');
+    }
+
+    // Usamos el operador spread condicional para incluir o no el campo 'logoUrl'
+    const dataToUpdate: any = {
+        ...configData,
+        // Solo actualiza logoUrl si se envió en el DTO (ya sea Base64 o una URL existente)
+        ...(logoUrl !== undefined && { logoUrl: processedLogoUrl }),
+        
+        ...(banners.length > 0 && {
+          banners: {
+            deleteMany: {},
+            create: bannerDataForPrisma
+          }
+        })
+    };
+    
+    return this.prisma.configWeb.update({
+      where: { id },
+      data: dataToUpdate,
+      include: {
+        banners: true
+      }
+    });
+  }
+
+  // --- Banner methods (addBanner, updateBanner, removeBanner, getBanners - Ya ajustados) ---
+
+  async addBanner(configWebId: number, createBannerDto: CreateBannerDto) {
+    await this.findOne(configWebId); 
+    
+    let finalUrl = createBannerDto.url;
+    // **COMPROBACIÓN CLAVE:**
+    if (createBannerDto.url && createBannerDto.url.startsWith('data:')) {
+      finalUrl = await this.saveBase64Image(createBannerDto.url, 'banners');
+    }
+
+    return this.prisma.imagenBanner.create({
+      data: {
+        ...createBannerDto,
+        url: finalUrl,
+        configWebId
+      }
+    });
+  }
+
+  async updateBanner(bannerId: number, updateBannerDto: UpdateBannerDto) {
+    // ... (Verificación de existencia)
+
+    let dataToUpdate = { ...updateBannerDto };
+
+    // **COMPROBACIÓN CLAVE:** Solo procesar si 'url' existe y es Base64
+    if (updateBannerDto.url && updateBannerDto.url.startsWith('data:')) {
+      const finalUrl = await this.saveBase64Image(updateBannerDto.url, 'banners');
+      dataToUpdate.url = finalUrl;
+    }
+
+    return this.prisma.imagenBanner.update({
+      where: { id: bannerId },
+      data: dataToUpdate
+    });
+  }
+  
+  async removeBanner(bannerId: number) {
+     const banner = await this.prisma.imagenBanner.findUnique({
+       where: { id: bannerId }
+     });
+ 
+     if (!banner) {
+       throw new NotFoundException(`Banner con ID ${bannerId} no encontrado`);
+     }
+ 
+     return this.prisma.imagenBanner.delete({
+       where: { id: bannerId }
+     });
+  }
+
+  async getBanners(configWebId: number) {
+     await this.findOne(configWebId);
+ 
+     return this.prisma.imagenBanner.findMany({
+       where: { configWebId },
+       orderBy: { orden: 'asc' }
+     });
   }
 
   async findAll() {
@@ -56,85 +237,5 @@ export class ConfigWebService {
     }
 
     return configWeb;
-  }
-
-  async update(id: number, updateConfigWebDto: UpdateConfigWebDto) {
-    await this.findOne(id); // Verificar que existe
-
-    const { banners, ...configData } = updateConfigWebDto;
-
-    return this.prisma.configWeb.update({
-      where: { id },
-      data: {
-        ...configData,
-        ...(banners && {
-          banners: {
-            deleteMany: {}, // Eliminar banners existentes
-            create: banners // Crear nuevos banners
-          }
-        })
-      },
-      include: {
-        banners: true
-      }
-    });
-  }
-
-  async remove(id: number) {
-    await this.findOne(id); // Verificar que existe
-
-    return this.prisma.configWeb.delete({
-      where: { id }
-    });
-  }
-
-  // Banner methods
-  async addBanner(configWebId: number, createBannerDto: CreateBannerDto) {
-    await this.findOne(configWebId); // Verificar que la config existe
-
-    return this.prisma.imagenBanner.create({
-      data: {
-        ...createBannerDto,
-        configWebId
-      }
-    });
-  }
-
-  async updateBanner(bannerId: number, updateBannerDto: UpdateBannerDto) {
-    const banner = await this.prisma.imagenBanner.findUnique({
-      where: { id: bannerId }
-    });
-
-    if (!banner) {
-      throw new NotFoundException(`Banner con ID ${bannerId} no encontrado`);
-    }
-
-    return this.prisma.imagenBanner.update({
-      where: { id: bannerId },
-      data: updateBannerDto
-    });
-  }
-
-  async removeBanner(bannerId: number) {
-    const banner = await this.prisma.imagenBanner.findUnique({
-      where: { id: bannerId }
-    });
-
-    if (!banner) {
-      throw new NotFoundException(`Banner con ID ${bannerId} no encontrado`);
-    }
-
-    return this.prisma.imagenBanner.delete({
-      where: { id: bannerId }
-    });
-  }
-
-  async getBanners(configWebId: number) {
-    await this.findOne(configWebId); // Verificar que la config existe
-
-    return this.prisma.imagenBanner.findMany({
-      where: { configWebId },
-      orderBy: { orden: 'asc' }
-    });
   }
 }
