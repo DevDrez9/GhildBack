@@ -82,45 +82,21 @@ export class TiendaService {
     const tienda = await this.prisma.tienda.findUnique({
       where: { id },
       include: {
-        configWeb: true,
+        configWeb: {
+          include:{
+            banners:true
+          }
+        },
         categorias: {
           include: {
             subcategorias: true,
-            productos: {
-              take: 5,
-              orderBy: { createdAt: 'desc' }
-            }
+            productos: false
           }
         },
         sucursales: true,
-        productos: {
-          take: 10,
-          orderBy: { createdAt: 'desc' },
-          include: {
-            categoria: true,
-            subcategoria: true
-          }
-        },
-        usuarios: {
-          include: {
-            usuario: {
-              select: {
-                id: true,
-                email: true,
-                nombre: true,
-                rol: true
-              }
-            }
-          }
-        },
-        _count: {
-          select: {
-            productos: true,
-            usuarios: true,
-            ventas: true,
-            sucursales: true
-          }
-        }
+        productos: false,
+        usuarios: false,
+        _count: false
       }
     });
 

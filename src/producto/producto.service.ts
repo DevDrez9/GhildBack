@@ -152,9 +152,9 @@ async findAll(filterProductoDto: FilterProductoDto = {}): Promise<{ productos: P
       tiendaId,
       categoriaId,
       subcategoriaId,
-      enOferta,
-      esNuevo,
-      esDestacado,
+      enOferta: rawEnOferta, // Use temporary names for raw input
+        esNuevo: rawEsNuevo,
+        esDestacado: rawEsDestacado,
       search,
       minPrice,
       maxPrice,
@@ -169,13 +169,22 @@ async findAll(filterProductoDto: FilterProductoDto = {}): Promise<{ productos: P
     const pageNumber = Math.max(1, parseInt(page as any) || 1);
     const limitNumber = Math.max(1, Math.min(parseInt(limit as any) || 10, 100)); // Limitar máximo a 100
 
+    // ⭐ CRITICAL FIX: Explicitly convert query strings to booleans
+    // We only perform the conversion if the parameter was actually provided.
+    const enOferta = rawEnOferta !== undefined ? String(rawEnOferta).toLowerCase() === 'true' : undefined;
+    const esNuevo = rawEsNuevo !== undefined ? String(rawEsNuevo).toLowerCase() === 'true' : undefined;
+    const esDestacado = rawEsDestacado !== undefined ? String(rawEsDestacado).toLowerCase() === 'true' : undefined;
+    
+
     const where: Prisma.ProductoWhereInput = {
       ...(tiendaId && { tiendaId }),
       ...(categoriaId && { categoriaId }),
       ...(subcategoriaId && { subcategoriaId }),
-      ...(enOferta !== undefined && { enOferta }),
-      ...(esNuevo !== undefined && { esNuevo }),
-      ...(esDestacado !== undefined && { esDestacado }),
+      // ⭐ UPDATED LOGIC: Use the converted boolean values
+        // We only add the filter if the value is not 'undefined' after conversion.
+        ...(enOferta && { enOferta: true }),
+        ...(esNuevo && { esNuevo: true }),
+        ...(esDestacado && { esDestacado: true }),
       ...(search && {
         OR: [
           { nombre: { contains: search } },
@@ -206,6 +215,7 @@ async findAll(filterProductoDto: FilterProductoDto = {}): Promise<{ productos: P
           subcategoria: true,
           tienda: true,
           proveedor: true,
+          
           imagenes: {
             orderBy: { orden: 'asc' }
           }
@@ -467,6 +477,29 @@ async update(id: number, updateProductoDto: UpdateProductoDto): Promise<Producto
 
     return productos.map(producto => new ProductoResponseDto(producto));
   }
+  
+  async getProductosWeb(tiendaId?: number): Promise<{ 
+    nuevos: ProductoResponseDto[]; 
+    destacados: ProductoResponseDto[]; 
+    oferta: ProductoResponseDto[]; 
+}> {
+    
+    // 1. Ejecutar las tres llamadas de forma paralela
+    const [productosNuevos, productosDestacados, productosOferta] = await Promise.all([
+        // ¡Importante! Llamar a los métodos (incluyendo 'this' y los argumentos)
+        this.getProductosNuevos(tiendaId),
+        this.getProductosDestacados(tiendaId),
+        this.getProductosOferta(tiendaId),
+    ]);
+
+    // 2. Devolver los resultados en la estructura deseada
+    return {
+        nuevos: productosNuevos,
+        destacados: productosDestacados,
+        oferta: productosOferta
+    };
+}
+
    async getProductosBajoStock(tiendaId?: number, stockMinimo: number = 5): Promise<{ productos: ProductoResponseDto[], total: number }> {
     const where: Prisma.ProductoWhereInput = {
       stock: { lte: stockMinimo },

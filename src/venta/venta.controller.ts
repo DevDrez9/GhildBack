@@ -47,7 +47,7 @@ export class VentaController {
     @Param('periodo') periodo: 'dia' | 'semana' | 'mes',
     @Query('tiendaId') tiendaId?: string,
     @Query('sucursalId') sucursalId?: string
-  ) {
+  ) {  
     return this.ventaService.getVentasPorPeriodo(
       periodo,
       tiendaId ? +tiendaId : undefined,

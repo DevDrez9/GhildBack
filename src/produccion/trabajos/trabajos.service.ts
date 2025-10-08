@@ -676,71 +676,130 @@ export class TrabajosService {
     const trabajo = await this.findOne(id);
 
     if (trabajo.estado !== 'EN_PROCESO' && trabajo.estado !== 'PAUSADO') {
-      throw new BadRequestException('Solo se pueden completar trabajos en estado EN_PROCESO o PAUSADO');
+        throw new BadRequestException('Solo se pueden completar trabajos en estado EN_PROCESO o PAUSADO');
     }
 
     if (completarDto.cantidadProducida > trabajo.cantidad) {
-      throw new BadRequestException('La cantidad producida no puede ser mayor que la cantidad planificada');
+        throw new BadRequestException('La cantidad producida no puede ser mayor que la cantidad planificada');
     }
 
-    const tiendaId = completarDto.tiendaId || trabajo.tiendaId;
+    // ⭐ 1. DETERMINAR EL ID DE LA TIENDA DINÁMICAMENTE
+    const tiendaId = completarDto.tiendaId || trabajo.tiendaId; 
 
-    // Verificar que la tienda existe
+    // Verificar que la tienda existe (lógica existente)
     const tienda = await this.prisma.tienda.findUnique({
-      where: { id: tiendaId }
+        where: { id: tiendaId }
     });
 
     if (!tienda) {
-      throw new NotFoundException(`Tienda con ID ${tiendaId} no encontrada`);
+        throw new NotFoundException(`Tienda con ID ${tiendaId} no encontrada`);
     }
+
+    // Obtener el productoId antes de la transacción
+    const productoIdProducido = trabajo.parametrosTela?.producto?.id;
 
     try {
-      const result = await this.prisma.$transaction(async (prisma) => {
-        // Actualizar el trabajo
-        const updatedTrabajo = await prisma.trabajoEnProceso.update({
-          where: { id },
-          data: {
-            estado: 'COMPLETADO',
-            fechaFinReal: new Date()
-          },
-          include: {
-            parametrosTela: {
-              include: {
-                producto: true,
-                tela: true
-              }
-            },
-            costurero: true,
-            tienda: true
-          }
+        const result = await this.prisma.$transaction(async (prisma) => {
+            
+            // 2. Actualizar el trabajo (lógica existente)
+            const updatedTrabajo = await prisma.trabajoEnProceso.update({
+                where: { id },
+                data: {
+                    estado: 'COMPLETADO',
+                    fechaFinReal: new Date()
+                },
+                include: {
+                    parametrosTela: {
+                        include: {
+                            producto: true,
+                            tela: true
+                        }
+                    },
+                    costurero: true,
+                    tienda: true
+                }
+            });
+
+            // 3. Crear el trabajo finalizado (lógica existente)
+            const trabajoFinalizado = await prisma.trabajoFinalizado.create({
+                data: {
+                    trabajoEnProceso: { connect: { id } },
+                    fechaFinalizacion: new Date(completarDto.fechaFinalizacion),
+                    cantidadProducida: completarDto.cantidadProducida,
+                    calidad: completarDto.calidad,
+                    notas: completarDto.notas,
+                    tienda: { connect: { id: tiendaId } }
+                }
+            });
+
+            // 4. LÓGICA DE ACTUALIZACIÓN DE INVENTARIO (Upsert)
+            if (productoIdProducido) {
+                const cantidadAñadir = completarDto.cantidadProducida;
+                
+                // Intentar encontrar el inventario existente para el producto en la TIENDA DINÁMICA
+                const inventarioExistente = await prisma.inventarioTienda.findUnique({
+                    where: { 
+                        productoId_tiendaId: {
+                            productoId: productoIdProducido,
+                            tiendaId: tiendaId, // ⭐ USANDO EL ID DE TIENDA DINÁMICO
+                        }
+                    }
+                });
+
+                let stockAnterior: number;
+                let inventarioActualizado: any;
+
+                if (inventarioExistente) {
+                    // El producto YA EXISTE -> Actualizar stock
+                    stockAnterior = inventarioExistente.stock;
+                    inventarioActualizado = await prisma.inventarioTienda.update({
+                        where: { id: inventarioExistente.id },
+                        data: { stock: { increment: cantidadAñadir } }
+                    });
+                } else {
+                    // El producto NO EXISTE -> Crear nuevo registro
+                    stockAnterior = 0;
+                    inventarioActualizado = await prisma.inventarioTienda.create({
+                        data: {
+                            productoId: productoIdProducido,
+                            tiendaId: tiendaId, // ⭐ USANDO EL ID DE TIENDA DINÁMICO
+                            stock: cantidadAñadir,
+                            stockMinimo: 0,
+                        }
+                    });
+                }
+
+                // 5. Registrar Movimiento de Inventario (Entrada por Producción)
+                await prisma.movimientoInventario.create({
+                    data: {
+                        tipo: 'ENTRADA_PRODUCCION', 
+                        cantidad: cantidadAñadir,
+                        productoId: productoIdProducido,
+                        motivo: `Entrada por finalización de Trabajo #${id} en Tienda #${tiendaId}`,
+                        usuarioId: 1,
+                        inventarioTiendaId: inventarioActualizado.id,
+                        stockAnterior: stockAnterior,
+                        stockNuevo: inventarioActualizado.stock,
+                    }
+                });
+
+            } else {
+                console.warn(`Trabajo ${id} completado, pero no se encontró producto asociado en parametrosTela. Inventario NO actualizado.`);
+            }
+
+            return { ...updatedTrabajo, trabajoFinalizado };
         });
 
-        // Crear el trabajo finalizado
-        const trabajoFinalizado = await prisma.trabajoFinalizado.create({
-          data: {
-            trabajoEnProceso: { connect: { id } },
-            fechaFinalizacion: new Date(completarDto.fechaFinalizacion),
-            cantidadProducida: completarDto.cantidadProducida,
-            calidad: completarDto.calidad,
-            notas: completarDto.notas,
-            tienda: { connect: { id: tiendaId } }
-          }
-        });
-
-        return { ...updatedTrabajo, trabajoFinalizado };
-      });
-
-      return new TrabajoResponseDto(result);
+        return new TrabajoResponseDto(result);
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError) {
-        if (error.code === 'P2002') {
-          throw new ConflictException('Error al completar el trabajo');
+        if (error instanceof Prisma.PrismaClientKnownRequestError) {
+            if (error.code === 'P2002') {
+                throw new ConflictException('Error al completar el trabajo');
+            }
         }
-      }
-      throw error;
+        throw error;
     }
-  }
-
+}
   async remove(id: number): Promise<void> {
     const trabajo = await this.findOne(id);
 

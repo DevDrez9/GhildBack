@@ -45,6 +45,11 @@ export class ProductoController {
     return this.productoService.getProductosNuevos(tiendaId ? +tiendaId : undefined);
   }
 
+  @Get('web')
+  getWeb(@Query('tiendaId') tiendaId?: string) {
+    return this.productoService.getProductosWeb(tiendaId ? +tiendaId : undefined);
+  }
+
   @Get('bajo-stock')
   getBajoStock(
     @Query('tiendaId') tiendaId?: string,

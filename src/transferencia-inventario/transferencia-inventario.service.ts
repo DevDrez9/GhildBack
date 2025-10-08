@@ -141,12 +141,18 @@ export class TransferenciaInventarioService {
 
         // Asumo que el modelo InventarioTienda incluye el campo tiendaId
         const [producto, usuario, inventarioOrigen] = await Promise.all([
-            this.prisma.producto.findUnique({ where: { id: productoId } }),
-            this.prisma.usuario.findUnique({ where: { id: usuarioId } }),
-            // Obtener inventario del producto en la Tienda (Origen)
-            this.prisma.inventarioTienda.findUnique({ where: { id: origenId } }), 
-        ]);
-
+        this.prisma.producto.findUnique({ where: { id: productoId } }),
+        this.prisma.usuario.findUnique({ where: { id: usuarioId } }),
+        // Buscar el registro de InventarioTienda por productoId y tiendaId (que es origenId)
+        this.prisma.inventarioTienda.findUnique({ 
+            where: { 
+                 productoId_tiendaId: { // Asumiendo que esta es tu clave compuesta
+                     productoId: productoId,
+                     tiendaId: origenId, // ¡Usamos origenId como tiendaId!
+                 }
+            } 
+        }), 
+    ]);
         if (!producto) {
             throw new NotFoundException(`Producto con ID ${productoId} no encontrado`);
         }
@@ -161,10 +167,14 @@ export class TransferenciaInventarioService {
         }
         
         // Obtenemos el tiendaId del inventario de origen para usarlo en el destino
-        const tiendaIdOrigen = inventarioOrigen.tiendaId;
-        if (!tiendaIdOrigen) {
-             throw new ConflictException('El inventario de origen no tiene un ID de tienda asociado.');
-        }
+    const tiendaIdOrigen = inventarioOrigen.tiendaId;
+    const inventarioTiendaId = inventarioOrigen.id; // ¡Guardamos el ID REAL del inventario!
+
+    // ... (Validación de tiendaIdOrigen) ...
+    if (!tiendaIdOrigen) {
+        throw new ConflictException('El inventario de origen no tiene un ID de tienda asociado.');
+    }
+
 
 
         // -------------------------------------------------------------------
@@ -177,11 +187,11 @@ export class TransferenciaInventarioService {
         try {
             const resultadoTransaccion = await this.prisma.$transaction(async (prisma) => {
                 
-                // A. Restar stock del origen (InventarioTienda)
-                const origenActualizado = await prisma.inventarioTienda.update({
-                    where: { id: origenId },
-                    data: { stock: { decrement: cantidad } }
-                });
+                  // 💡 CAMBIO: Usamos el ID REAL del registro de inventario (inventarioTiendaId)
+            const origenActualizado = await prisma.inventarioTienda.update({
+                where: { id: inventarioTiendaId }, // USAMOS EL ID REAL DEL REGISTRO DE INVENTARIO
+                data: { stock: { decrement: cantidad } }
+            });
 
                 // B. Upsert en el destino (InventarioSucursal) 
                 let inventarioDestinoExistente = await prisma.inventarioSucursal.findUnique({
