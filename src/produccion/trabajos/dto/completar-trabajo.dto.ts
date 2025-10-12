@@ -18,4 +18,8 @@ export class CompletarTrabajoDto {
   @IsOptional()
   @IsNumber()
   tiendaId?: number;
+
+  @IsOptional()
+  @IsNumber()
+  costo?:number;
 }

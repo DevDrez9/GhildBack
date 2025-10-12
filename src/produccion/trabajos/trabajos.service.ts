@@ -183,8 +183,11 @@ export class TrabajosService {
       this.prisma.trabajoEnProceso.findMany({
         where,
         include: {
+          
           parametrosTela: {
+           
             include: {
+               
               producto: {
                 select: {
                   id: true,
@@ -196,7 +199,8 @@ export class TrabajosService {
                   id: true,
                   nombreComercial: true
                 }
-              }
+              },
+             
             }
           },
           costurero: {
@@ -728,6 +732,7 @@ export class TrabajosService {
                     cantidadProducida: completarDto.cantidadProducida,
                     calidad: completarDto.calidad,
                     notas: completarDto.notas,
+                     costo:completarDto.costo,
                     tienda: { connect: { id: tiendaId } }
                 }
             });

@@ -609,6 +609,7 @@ model TrabajoFinalizado {
   cantidadProducida Int
   calidad           CalidadProducto @default(EXCELENTE)
   notas             String?
+  costo             Decimal?
   tiendaId          Int
   tienda            Tienda          @relation(fields: [tiendaId], references: [id])
   movimientosInventario MovimientoInventario[]

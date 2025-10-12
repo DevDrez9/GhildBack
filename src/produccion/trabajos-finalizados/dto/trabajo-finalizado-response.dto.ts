@@ -7,6 +7,7 @@ export class TrabajoFinalizadoResponseDto {
   cantidadProducida: number;
   calidad: CalidadProducto;
   notas?: string;
+  costo?:number;
   tiendaId: number;
   createdAt: Date;
   updatedAt: Date;
@@ -24,6 +25,7 @@ export class TrabajoFinalizadoResponseDto {
     this.calidad = partial.calidad;
     this.notas = partial.notas || undefined;
     this.tiendaId = partial.tiendaId;
+    this.costo=partial.costo;
     this.createdAt = partial.createdAt;
     this.updatedAt = partial.updatedAt;
 

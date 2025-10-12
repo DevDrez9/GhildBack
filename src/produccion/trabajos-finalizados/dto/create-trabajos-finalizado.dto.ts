@@ -37,4 +37,8 @@ export class FilterTrabajoFinalizadoDto {
   @IsNumber()
   @IsOptional()
   limit?: number;
+
+   @IsOptional()
+  @IsNumber()
+  costo?:number;
 }

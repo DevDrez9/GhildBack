@@ -41,6 +41,7 @@ export class TrabajoResponseDto {
       this.parametrosTela = {
         id: partial.parametrosTela.id,
         codigoReferencia: partial.parametrosTela.codigoReferencia,
+        fotoReferenciaUrl:partial.parametrosTela.fotoReferenciaUrl,
         nombreModelo: partial.parametrosTela.nombreModelo,
         producto: partial.parametrosTela.producto ? {
           id: partial.parametrosTela.producto.id,
