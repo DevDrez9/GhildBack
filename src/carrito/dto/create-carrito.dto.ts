@@ -1,17 +1,25 @@
-import { IsString, IsOptional, IsNumber, IsArray, ValidateNested } from 'class-validator';
+import { IsInt, IsOptional, IsString, Min, IsDecimal, ValidateNested, IsNumber } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class CreateCarritoItemDto {
-  @IsNumber()
-  productoId!: number;
+  @IsInt()
+  productoId: number;
 
-  @IsNumber()
-  cantidad!: number;
+  @IsInt()
+  @IsOptional()
+  @Min(1)
+  cantidad?: number;
+
+ 
 }
 
 export class CreateCarritoDto {
+  @IsInt()
+  tiendaId: number;
+
   @IsString()
-  cliente!: string;
+  @IsOptional()
+  cliente?: string;
 
   @IsString()
   @IsOptional()
@@ -25,11 +33,15 @@ export class CreateCarritoDto {
   @IsOptional()
   notas?: string;
 
-  @IsNumber()
-  tiendaId!: number;
-
-  @IsArray()
+  // Los ítems iniciales son opcionales
+  @IsOptional()
   @ValidateNested({ each: true })
   @Type(() => CreateCarritoItemDto)
-  items!: CreateCarritoItemDto[];
+  items?: CreateCarritoItemDto[];
+
+  // El clienteId lo obtendremos del token o del controlador, no del body.
+  // Pero lo incluimos por si acaso.
+  @IsInt()
+  @IsOptional()
+  clienteId?: number; 
 }

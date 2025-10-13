@@ -26,6 +26,10 @@ export class FilterVentaDto {
   @IsOptional()
   cliente?: string;
 
+@IsOptional()
+@IsNumber()
+  productoId?: number; 
+
   @IsString()
   @IsOptional()
   numeroVenta?: string;

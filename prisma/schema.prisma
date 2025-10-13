@@ -135,11 +135,13 @@ model ImagenProducto {
 
 model Carrito {
   id        Int      @id @default(autoincrement())
-  cliente   String
+  clienteId   Int
+  usuario    Usuario  @relation(fields: [clienteId], references: [id])
+  cliente    String?
   telefono  String?
   direccion String?
   notas     String?
-  estado    String   @default("pendiente")
+  estado    String   @default("nuevo")
   tiendaId  Int
   tienda    Tienda   @relation(fields: [tiendaId], references: [id])
   items     CarritoItem[]
@@ -176,6 +178,8 @@ model Usuario {
   costureros Costurero[]
   transferencias TransferenciaInventario[]
    sucursales UsuarioSucursal[]
+   carrito Carrito[]
+  
 }
 model UsuarioTienda {
   id        Int      @id @default(autoincrement())
@@ -204,7 +208,7 @@ enum Rol {
   ADMIN
   MANAGER
   USER
-  COSTURERO
+  CLIENTE
 }
 
 model Venta {

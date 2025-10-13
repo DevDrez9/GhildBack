@@ -7,6 +7,8 @@ import { VentaResponseDto, VentaItemResponseDto } from './dto/venta-response.dto
 import { FilterVentaDto } from './dto/filter-venta.dto';
 import { PrismaService } from 'src/prisma.service';
 import { EstadoVenta, Prisma } from 'generated/prisma/client';
+import { VentaAgregadaResponseDto } from './dto/venta-agregada-response';
+import { Decimal } from 'generated/prisma/runtime/library';
 
 @Injectable()
 export class VentaService {
@@ -547,4 +549,93 @@ export class VentaService {
 
     return ventas.map(venta => new VentaResponseDto(venta));
   }
+
+
+  async getVentasGlobalesPorProducto(
+    productoId: number,
+    tiendaId?: number,
+): Promise<VentaAgregadaResponseDto> {
+    
+    // 1. Verificar la existencia del producto
+    const producto = await this.prisma.producto.findUnique({
+        where: { id: productoId },
+        select: { nombre: true, id: true }
+    });
+
+    if (!producto) {
+        throw new NotFoundException(`Producto con ID ${productoId} no encontrado`);
+    }
+
+    // 2. Definir los filtros WHERE de SQL (tiendaId es opcional)
+     const tiendaFilter = tiendaId 
+        ? Prisma.sql`AND v.\`tiendaId\` = ${tiendaId}` // Usar acentos graves
+        : Prisma.empty;
+        
+    // 3. ⭐ CONSULTA CRUDA para calcular SUM(precio * cantidad) ⭐
+     const resultadoRaw = await this.prisma.$queryRaw<{
+        total_unidades: bigint, 
+        total_ingresos: string // Cambiamos Decimal a string
+    }[]>(Prisma.sql`
+        SELECT
+            SUM(vi.\`cantidad\`) AS total_unidades,
+            -- Aplicamos CAST a CHAR para que MySQL devuelva un string que JavaScript pueda parsear
+            CAST(
+                SUM(
+                    -- LÓGICA DE PRECIO DE RESPALDO ANIDADA
+                    (
+                        CASE
+                            WHEN vi.\`precio\` IS NULL OR vi.\`precio\` = 0 THEN 
+                                COALESCE(p.\`precio\`, 0)
+                            ELSE vi.\`precio\` 
+                        END
+                    ) * vi.\`cantidad\`
+                ) 
+                AS CHAR) AS total_ingresos -- <--- CLAVE: Forzamos la salida como texto
+        FROM \`VentaItem\` vi
+        JOIN \`Venta\` v ON v.id = vi.\`ventaId\`
+        JOIN \`Producto\` p ON p.id = vi.\`productoId\` 
+        WHERE 
+            vi.\`productoId\` = ${productoId}
+            ${tiendaFilter}
+    `);
+    const resultado = resultadoRaw[0];
+  
+      // 4. Devolver la respuesta (convirtiendo la cadena de ingreso a número)
+    const totalIngresosNumber = resultado.total_ingresos 
+                               ? parseFloat(resultado.total_ingresos) 
+                               : 0;
+      
+    // 4. Devolver la respuesta
+    return new VentaAgregadaResponseDto({
+        productoId: producto.id,
+        nombreProducto: producto.nombre,
+        // BigInt (total_unidades) debe convertirse a number o string
+        totalUnidadesVendidas: Number(resultado.total_unidades) || 0, 
+        // Decimal (total_ingresos) debe convertirse a number
+         totalIngresos: totalIngresosNumber, // <--- Usamos el número convertido
+    });
+}
+
+/**
+ * Obtiene la lista de todas las ventas de una tienda (incluye todas sus sucursales).
+ * Este método usa el findAll existente con un filtro de tiendaId.
+ */
+async getVentasPorTienda(
+    tiendaId: number,
+    filterVentaDto: FilterVentaDto = {}
+): Promise<{ ventas: VentaResponseDto[], total: number }> {
+    
+    // Verificar que la tienda existe (opcional, pero buena práctica)
+    const tienda = await this.prisma.tienda.findUnique({ where: { id: tiendaId } });
+    if (!tienda) {
+        throw new NotFoundException(`Tienda con ID ${tiendaId} no encontrada`);
+    }
+
+    // Aseguramos que el filtro incluya el tiendaId
+    filterVentaDto.tiendaId = tiendaId;
+
+    // Reutilizamos el método findAll, que ya maneja paginación y otros filtros.
+    return this.findAll(filterVentaDto);
+}
+
 }

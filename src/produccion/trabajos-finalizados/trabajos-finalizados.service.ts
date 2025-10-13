@@ -6,6 +6,7 @@ import { TrabajoFinalizadoResponseDto } from './dto/trabajo-finalizado-response.
 import { PrismaService } from 'src/prisma.service';
 import { FilterTrabajoFinalizadoDto } from './dto/create-trabajos-finalizado.dto';
 import { Prisma, TipoMovimiento } from 'generated/prisma/client';
+import { TrabajoAgregadoResponseDto } from './dto/trabajo-agregado-response.dto';
 
 
 @Injectable()
@@ -73,7 +74,9 @@ export class TrabajosFinalizadosService {
         where,
         include: {
           trabajoEnProceso: {
+            
             include: {
+              
               parametrosTela: {
                 include: {
                   producto: {
@@ -589,4 +592,58 @@ export class TrabajosFinalizadosService {
       where: { id }
     });
   }
+
+    async getAgregadoPorProducto(
+        productoId: number,
+        tiendaId?: number
+    ): Promise<TrabajoAgregadoResponseDto> {
+
+        // 1. Verificar la existencia del producto y obtener su nombre
+        const producto = await this.prisma.producto.findUnique({
+            where: { id: productoId },
+            select: { nombre: true, id: true }
+        });
+
+        if (!producto) {
+            throw new NotFoundException(`Producto con ID ${productoId} no encontrado`);
+        }
+        
+        // 2. Definir el filtro WHERE de SQL (tiendaId es opcional)
+        const tiendaFilter = tiendaId 
+            ? Prisma.sql`AND tf.\`tiendaId\` = ${tiendaId}` // Usar acentos graves para MySQL
+            : Prisma.empty;
+
+        // 3. ⭐ CONSULTA CRUDA (SQL) con JOINs para la agregación ⭐
+        // La ruta de JOINs es: TrabajoFinalizado -> TrabajoEnProceso -> ParametrosTela -> Producto
+       const resultadoRaw = await this.prisma.$queryRaw<{
+        total_costo: string, 
+        total_cantidad: bigint
+    }[]>(Prisma.sql`
+        SELECT
+            SUM(tf.\`cantidadProducida\`) AS total_cantidad,
+            -- CLAVE: Sumamos directamente el costo de la producción, usando COALESCE para tratar NULL como 0
+            CAST(
+                SUM(COALESCE(tf.\`costo\`, 0))
+                AS CHAR) AS total_costo -- Forzamos a CHAR
+        FROM \`TrabajoFinalizado\` tf
+        JOIN \`TrabajoEnProceso\` tep ON tep.id = tf.\`trabajoEnProcesoId\`
+        JOIN \`ParametrosTela\` pt ON pt.id = tep.\`parametrosTelaId\`
+        WHERE 
+            pt.\`productoId\` = ${productoId}
+            ${tiendaFilter}
+    `);
+
+        const resultado = resultadoRaw[0];
+
+        // 4. Mapear y convertir los resultados
+        const totalCosto = resultado.total_costo ? parseFloat(resultado.total_costo) : 0;
+        const totalCantidadProducida = resultado.total_cantidad ? Number(resultado.total_cantidad) : 0;
+
+        return new TrabajoAgregadoResponseDto({
+            productoId: producto.id,
+            nombreProducto: producto.nombre,
+            totalCosto: totalCosto,
+            totalCantidadProducida: totalCantidadProducida,
+        });
+    }
 }

@@ -15,6 +15,8 @@ import { CreateVentaDto } from './dto/create-venta.dto';
 import { UpdateVentaDto } from './dto/update-venta.dto';
 import { UpdateEstadoVentaDto } from './dto/update-estado-venta.dto';
 import { FilterVentaDto } from './dto/filter-venta.dto';
+import { VentaResponseDto } from './dto/venta-response.dto';
+import { VentaAgregadaResponseDto } from './dto/venta-agregada-response';
 
 @Controller('ventas')
 export class VentaController {
@@ -80,4 +82,37 @@ export class VentaController {
   remove(@Param('id') id: string) {
     return this.ventaService.remove(+id);
   }
+
+
+    @Get('tienda/:tiendaId')
+    async getVentasPorTienda(
+        @Param('tiendaId') tiendaId: string,
+        @Query() filterDto: FilterVentaDto
+    ): Promise<{ ventas: VentaResponseDto[], total: number }> {
+        
+        const idTienda = parseInt(tiendaId, 10);
+        
+        // El DTO ya fue transformado, pero aseguramos el tiendaId
+        filterDto.tiendaId = idTienda;
+
+        // Reutilizamos el método findAll, que tiene la lógica de filtro y paginación
+        // Ahora está encapsulado en getVentasPorTienda en el servicio.
+        return this.ventaService.getVentasPorTienda(idTienda, filterDto);
+    }
+    
+    // ----------------------------------------------------------------
+    // 2. Obtener VENTAS GLOBALES AGREGADAS por PRODUCTO
+    // GET /admin/ventas/producto/:productoId?tiendaId=...
+    // ----------------------------------------------------------------
+    @Get('producto/:productoId/tienda/:tiendaId')
+    async getVentasGlobalesPorProducto(
+        @Param('productoId') productoId: string,
+        @Param('tiendaId') tiendaId: string  // Puede filtrar la agregación por tienda
+    ): Promise<VentaAgregadaResponseDto> {
+        
+        const idProducto = parseInt(productoId, 10);
+        const idTienda = tiendaId ? parseInt(tiendaId, 10) : undefined;
+        
+        return this.ventaService.getVentasGlobalesPorProducto(idProducto, idTienda);
+    }
 }

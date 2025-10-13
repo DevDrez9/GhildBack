@@ -13,6 +13,10 @@ import {
 import { TrabajosFinalizadosService } from './trabajos-finalizados.service';
 import { UpdateCalidadDto } from './dto/update-calidad.dto';
 import { FilterTrabajoFinalizadoDto } from './dto/create-trabajos-finalizado.dto';
+import { TrabajoAgregadoResponseDto } from './dto/trabajo-agregado-response.dto';
+import { FilterProductoTrabajoDto } from './dto/filter-trabajos-finalizados';
+
+
 
 @Controller('trabajos-finalizados')
 export class TrabajosFinalizadosController {
@@ -59,4 +63,20 @@ export class TrabajosFinalizadosController {
   remove(@Param('id') id: string) {
     return this.trabajosFinalizadosService.remove(+id);
   }
+
+
+
+  @Get('agregado/producto/:productoId')
+    async getTrabajosAgregadosPorProducto(
+        @Param('productoId') productoId: string,
+        @Query() filter: FilterProductoTrabajoDto
+    ): Promise<TrabajoAgregadoResponseDto> {
+        
+        const idProducto = parseInt(productoId, 10);
+        
+        return this.trabajosFinalizadosService.getAgregadoPorProducto(
+            idProducto,
+            filter.tiendaId
+        );
+    }
 }

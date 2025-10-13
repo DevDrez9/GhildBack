@@ -1,88 +1,122 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Patch,
-  Param,
-  Delete,
-  HttpCode,
-  HttpStatus,
-  Query,
-} from '@nestjs/common';
+import { Controller, Post, Body, Param, Get, Patch, UsePipes, ValidationPipe, UseGuards, Req, Query, Delete, HttpCode, HttpStatus, ParseIntPipe, NotFoundException } from '@nestjs/common';
 import { CarritoService } from './carrito.service';
 import { CreateCarritoDto, CreateCarritoItemDto } from './dto/create-carrito.dto';
-import { UpdateCarritoDto } from './dto/update-carrito.dto';
-import { UpdateEstadoCarritoDto } from './dto/update-estado-carrito.dto';
+import { CarritoResponseDto } from './dto/carrito-response.dto';
 import { FilterCarritoDto } from './dto/filter-carrito.dto';
+// Importa tu Guard de autenticación y DTOs
+
+// Simulación de obtener el ID del usuario/cliente desde el token
+const DUMMY_CLIENT_ID = 1; 
 
 @Controller('carritos')
 export class CarritoController {
-  constructor(private readonly carritoService: CarritoService) {}
+    constructor(private readonly carritoService: CarritoService) {}
 
-  @Post()
-  @HttpCode(HttpStatus.CREATED)
-  create(@Body() createCarritoDto: CreateCarritoDto) {
-    return this.carritoService.create(createCarritoDto);
-  }
+    // ----------------------------------------------------------------
+    // 1. CREAR / OBTENER Carrito (Endpoint principal)
+    // POST /carritos
+    // ----------------------------------------------------------------
+    @Post()
+    // @UseGuards(JwtAuthGuard) // Usarías tu guardia de autenticación aquí
+    async create(
+        @Body() createCarritoDto: CreateCarritoDto,
+        
+    ): Promise<CarritoResponseDto> {
+        
+        
+        return this.carritoService.createOrFind( createCarritoDto);
+    }
 
-  @Get()
-  findAll(@Query() filterCarritoDto: FilterCarritoDto) {
-    return this.carritoService.findAll(filterCarritoDto);
-  }
+    // ----------------------------------------------------------------
+    // 2. AGREGAR ÍTEMS al Carrito (Carrito debe estar en estado 'nuevo')
+    // POST /carritos/:id/items
+    // ----------------------------------------------------------------
+    @Post(':id/items')
+    async addItem(
+        @Param('id') id: string,
+        @Body() itemDto: CreateCarritoItemDto
+    ): Promise<CarritoResponseDto> {
+        return this.carritoService.addItem(+id, itemDto);
+    }
 
-  @Get('cliente/:cliente')
-  findByCliente(
-    @Param('cliente') cliente: string,
-    @Query('tiendaId') tiendaId?: string
-  ) {
-    return this.carritoService.findByCliente(cliente, tiendaId ? +tiendaId : undefined);
-  }
+    // ----------------------------------------------------------------
+    // 3. FINALIZAR COMPRA (Cambia estado a 'pendiente')
+    // PATCH /carritos/:id/checkout
+    // ----------------------------------------------------------------
+    @Patch(':id/checkout')
+    async checkout(@Param('id') id: string): Promise<CarritoResponseDto> {
+        return this.carritoService.checkout(+id);
+    }
 
-  @Get('estadisticas')
-  getEstadisticas(@Query('tiendaId') tiendaId?: string) {
-    return this.carritoService.getEstadisticas(tiendaId ? +tiendaId : undefined);
-  }
+    // ----------------------------------------------------------------
+    // 4. TERMINAR COMPRA (Cambia estado a 'terminado')
+    // PATCH /carritos/:id/complete
+    // NOTA: Este endpoint se usaría internamente, p. ej., por un webhook de pago.
+    // ----------------------------------------------------------------
+    @Patch(':id/complete')
+    async complete(@Param('id') id: string): Promise<CarritoResponseDto> {
+        return this.carritoService.complete(+id);
+    }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.carritoService.findOne(+id);
-  }
+    // ----------------------------------------------------------------
+    // 5. OBTENER Carrito por ID
+    // GET /carritos/:id
+    // ----------------------------------------------------------------
+    @Get(':id')
+    async findOne(@Param('id') id: string): Promise<CarritoResponseDto> {
+        return this.carritoService.findOne(+id);
+    }
 
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() updateCarritoDto: UpdateCarritoDto) {
-    return this.carritoService.update(+id, updateCarritoDto);
-  }
+    @Get(':clienteId/cliente') 
+    async findCarritosByCliente(
+       @Param('clienteId') clienteId: string
+    ): Promise<CarritoResponseDto[]> {
+       
+        
+        return this.carritoService.findByClienteId(+clienteId);
+    }
 
-  @Patch(':id/estado')
-  updateEstado(@Param('id') id: string, @Body() updateEstadoCarritoDto: UpdateEstadoCarritoDto) {
-    return this.carritoService.updateEstado(+id, updateEstadoCarritoDto);
-  }
 
-  @Post(':id/items')
-  addItem(@Param('id') id: string, @Body() createItemDto: CreateCarritoItemDto) {
-    return this.carritoService.addItem(+id, createItemDto);
-  }
+     @Get('tienda/:tiendaId') 
+    // @UseGuards(AdminOrEmployeeGuard) // 💡 Proteger con un Guard de rol
+    async findCarritosTienda(
+        @Query() filterDto: FilterCarritoDto,
+       @Param('tiendaId') tiendaId: string
+    ): Promise<CarritoResponseDto[]> {
+       
+  
+        return this.carritoService.findCarritosByTiendaAndState(+tiendaId, filterDto.estado);
+    }
 
-  @Patch('items/:itemId')
-  updateItem(@Param('itemId') itemId: string, @Query('cantidad') cantidad: string) {
-    return this.carritoService.updateItem(+itemId, +cantidad);
-  }
 
-  @Delete('items/:itemId')
-  @HttpCode(HttpStatus.NO_CONTENT)
-  removeItem(@Param('itemId') itemId: string) {
-    return this.carritoService.removeItem(+itemId);
-  }
+     @Delete(':id')
+    @HttpCode(HttpStatus.NO_CONTENT) // 204 No Content para borrado exitoso
+    async delete(@Param('id', ParseIntPipe) id: number): Promise<void> {
+        try {
+            await this.carritoService.deleteCarrito(id);
+        } catch (error) {
+            // Manejar si el carrito no existe (P4004 es el código de error de Prisma para 'no encontrado')
+            if (error.code === 'P2025' || error.message.includes('No Carrito found')) { 
+                 throw new NotFoundException(`Carrito con ID ${id} no encontrado.`);
+            }
+            
+            throw error;
+        }
+    }
 
-  @Post(':id/convertir-venta')
-  convertToVenta(@Param('id') id: string) {
-    return this.carritoService.convertToVenta(+id);
-  }
 
-  @Delete(':id')
-  @HttpCode(HttpStatus.NO_CONTENT)
-  remove(@Param('id') id: string) {
-    return this.carritoService.remove(+id);
-  }
+    // RUTA para borrar un ítem específico: DELETE /carritos/item/:itemId
+    @Delete('item/:itemId')
+    @HttpCode(HttpStatus.NO_CONTENT) // 204 No Content para borrado exitoso
+    async deleteItem(@Param('itemId', ParseIntPipe) itemId: number): Promise<void> {
+        try {
+            await this.carritoService.deleteItemFromCarrito(itemId);
+        } catch (error) {
+            if (error.code === 'P2025' || error.message.includes('No CarritoItem found')) {
+                 throw new NotFoundException(`Ítem de carrito con ID ${itemId} no encontrado.`);
+            }
+            throw error;
+        }
+    }
+
 }
