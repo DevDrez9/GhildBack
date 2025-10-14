@@ -12,6 +12,9 @@ export class TrabajoResponseDto {
   fechaFinReal?: Date;
   notas?: string;
   tiendaId: number;
+  
+  pesoTotal:number;
+
   createdAt: Date;
   updatedAt: Date;
 
@@ -33,6 +36,7 @@ export class TrabajoResponseDto {
     this.fechaFinReal = partial.fechaFinReal || undefined;
     this.notas = partial.notas || undefined;
     this.tiendaId = partial.tiendaId;
+    this.pesoTotal=partial.pesoTotal;
     this.createdAt = partial.createdAt;
     this.updatedAt = partial.updatedAt;
 

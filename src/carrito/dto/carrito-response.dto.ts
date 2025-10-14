@@ -4,6 +4,7 @@ export class CarritoItemResponseDto {
     cantidad: number;
     productoId: number;
     precio: number;
+    talla?: string;
     
     producto: {
         id: number;
@@ -16,6 +17,7 @@ export class CarritoItemResponseDto {
     constructor(item: any) {
         this.id = item.id;
         this.cantidad = item.cantidad;
+        this.talla = item.talla;
         this.productoId = item.productoId;
         this.precio = parseFloat(item.precio || 0); 
 

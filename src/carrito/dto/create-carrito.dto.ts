@@ -10,6 +10,11 @@ export class CreateCarritoItemDto {
   @Min(1)
   cantidad?: number;
 
+  @IsString()
+  @IsOptional()
+  talla? :string;
+
+
  
 }
 

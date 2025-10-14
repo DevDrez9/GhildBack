@@ -160,6 +160,7 @@ model CarritoItem {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
    precio Decimal?
+   talla      String?
 }
 
 
@@ -443,6 +444,7 @@ model CompraItem {
   cantidad   Int            @default(1)
   precio     Decimal
   productoId Int
+  
   producto   Producto       @relation(fields: [productoId], references: [id])
   compraId   Int
   compra     CompraProveedor @relation(fields: [compraId], references: [id])
@@ -476,7 +478,7 @@ model Tela {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   inventarioTelas InventarioTela[]
-  parametrosTelas ParametrosTela[]
+  
   // Relación con los parámetros físicos de la tela
    parametrosFisicosId   Int?  // ← Una tela tiene UN parámetro
   parametrosFisicos     ParametrosFisicosTela? @relation(fields: [parametrosFisicosId], references: [id])
@@ -515,6 +517,7 @@ model InventarioTela {
   importe      Decimal
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
+  parametrosTelas ParametrosTela[]
 }
 
 model CompraTelaItem {
@@ -571,7 +574,8 @@ model ParametrosTela {
   productoId                  Int?
   producto                    Producto? @relation(fields: [productoId], references: [id])
   telaId                      Int?
-  tela                        Tela?     @relation(fields: [telaId], references: [id])
+  tela                        InventarioTela?     @relation(fields: [telaId], references: [id])
+  
   trabajos                    TrabajoEnProceso[]
   createdAt                   DateTime @default(now())
   updatedAt                   DateTime @updatedAt
@@ -591,6 +595,7 @@ model TrabajoEnProceso {
   fechaFinReal      DateTime?
   notas             String?
   tiendaId          Int
+  pesoTotal         Float?
   tienda            Tienda      @relation(fields: [tiendaId], references: [id])
   trabajoFinalizado TrabajoFinalizado?
   createdAt         DateTime    @default(now())

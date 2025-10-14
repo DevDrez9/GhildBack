@@ -145,8 +145,10 @@ export class TrabajosFinalizadosService {
                 tela: {
                   select: {
                     id: true,
-                    nombreComercial: true,
-                    tipoTela: true
+                    color:true,
+              tipoTela: true,
+              pesoGrupo:true,
+             tela:true,
                   }
                 }
               }

@@ -75,10 +75,11 @@ export class InventarioTelaService {
       throw error;
     }
   }
-    async createMany(
+     async createMany(
         createInventarioTelaDtos: CreateInventarioTelaDto[],
     ): Promise<InventarioTelaResponseDto[]> {
-        // 1. **Verificación de dependencias (fuera de la transacción)**
+        
+        // 1. **Verificación de dependencias (FUERA de la transacción)**
         const proveedorIds = [
             ...new Set(createInventarioTelaDtos.map(dto => dto.proveedorId)),
         ];
@@ -94,7 +95,7 @@ export class InventarioTelaService {
         const existingProveedorIds = new Set(proveedores.map(p => p.id));
         const existingTelaIds = new Set(telas.map(t => t.id));
 
-        // Lanzar excepción si falta algún ID
+        // Lanzar excepción si falta algún ID (Mantenemos esta validación importante)
         for (const id of proveedorIds) {
             if (!existingProveedorIds.has(id)) {
                 throw new NotFoundException(`Proveedor con ID ${id} no encontrado`);
@@ -106,58 +107,85 @@ export class InventarioTelaService {
             }
         }
 
-        // 2. **Crear el array de operaciones de Prisma (PrismaPromise[])**
-        // Este array SOLO debe contener las llamadas a los métodos de Prisma
-        const prismaOperations = createInventarioTelaDtos.map(dto => {
-            const { proveedorId, telaId, importe, ...inventarioData } = dto;
+        // 2. **Ejecutar las operaciones de UPSERT dentro de una transacción**
+        const inventariosResultados: Prisma.InventarioTelaGetPayload<{
+            include: { proveedor: { select: any }, tela: { select: any } }; 
+        }>[] = [];
 
-            // Calcular importe (lógica de negocio fuera de la DB)
-            const calculatedImporte = importe || (inventarioData.precioKG * inventarioData.pesoGrupo);
+        // Usamos una única transacción para garantizar que todos los cambios sean atómicos.
+        await this.prisma.$transaction(async (tx) => {
+            
+            for (const dto of createInventarioTelaDtos) {
+                const { proveedorId, telaId, importe, ...inventarioData } = dto;
 
-            // Devolver la llamada al método de Prisma, que es de tipo PrismaPromise
-            return this.prisma.inventarioTela.create({
-                data: {
+                // Definir la condición de búsqueda/actualización
+                const upsertWhere = {
+                    telaId: telaId,
+                    color: inventarioData.color,
+                };
+                
+                // Buscar si ya existe la combinación (telaId + color)
+                const existingInventario = await tx.inventarioTela.findFirst({
+                    where: upsertWhere,
+                });
+
+                // Calcular el importe (Fuera del upsert para reutilizarlo)
+                const calculatedImporte = importe || (inventarioData.precioKG * inventarioData.pesoGrupo);
+                
+                let inventarioOperado;
+                const baseData = {
                     ...inventarioData,
                     importe: calculatedImporte,
-                    proveedor: { connect: { id: proveedorId } },
-                    tela: { connect: { id: telaId } },
-                },
-                // Mantenemos el mismo 'include' para la respuesta detallada
-                include: {
-                    proveedor: {
-                        select: {
-                            id: true, nombre: true, contacto: true, telefono: true, email: true,
-                        },
-                    },
-                    tela: {
-                        select: {
-                            id: true, nombreComercial: true, tipoTela: true, composicion: true, gramaje: true,
-                        },
-                    },
-                },
-            });
-        });
+                };
 
-        try {
-            // 3. **Ejecutar la transacción**
-            // $transaction recibe el array de PrismaPromise[] directamente
-            const inventariosCreados = await this.prisma.$transaction(prismaOperations);
 
-            // 4. Mapear los resultados a los DTOs de respuesta
-            return inventariosCreados.map(
-                inventario => new InventarioTelaResponseDto(inventario),
-            );
-        } catch (error) {
-            // Manejo de errores de Prisma
-            if (error instanceof Prisma.PrismaClientKnownRequestError) {
-                if (error.code === 'P2002') {
-                    throw new ConflictException(
-                        'Error al crear el inventario de tela debido a un conflicto de datos.',
-                    );
+                if (existingInventario) {
+                    // ⭐ FLUIDO DE ACTUALIZACIÓN (UPDATE) ⭐
+                    inventarioOperado = await tx.inventarioTela.update({
+                        where: { id: existingInventario.id },
+                        data: {
+                            // Actualizar solo las cantidades:
+                            cantidadRollos: { increment: inventarioData.cantidadRollos },
+                            pesoGrupo: { increment: inventarioData.pesoGrupo },
+                            // Actualizar importe sumándole el nuevo valor (opcional, dependiendo de la lógica):
+                            importe: { increment: calculatedImporte }, 
+                            // Opcional: Actualizar el precioKG al precio más reciente, si se desea
+                            precioKG: inventarioData.precioKG,
+                            
+                            // Otros campos deben ser actualizados si se desea
+                            presentacion: inventarioData.presentacion,
+                            tipoTela: inventarioData.tipoTela,
+                            // El proveedor/tela/color ya existe, no se actualizan
+                        },
+                        include: {
+                            proveedor: { select: { id: true, nombre: true, contacto: true, telefono: true, email: true } },
+                            tela: { select: { id: true, nombreComercial: true, tipoTela: true, composicion: true, gramaje: true } },
+                        },
+                    });
+                } else {
+                    // ⭐ FLUIDO DE CREACIÓN (CREATE) ⭐
+                    inventarioOperado = await tx.inventarioTela.create({
+                        data: {
+                            ...baseData,
+                            proveedor: { connect: { id: proveedorId } },
+                            tela: { connect: { id: telaId } },
+                        },
+                        include: {
+                            proveedor: { select: { id: true, nombre: true, contacto: true, telefono: true, email: true } },
+                            tela: { select: { id: true, nombreComercial: true, tipoTela: true, composicion: true, gramaje: true } },
+                        },
+                    });
                 }
+                
+                // Agregar el resultado a la lista de resultados de la transacción
+                inventariosResultados.push(inventarioOperado);
             }
-            throw error;
-        }
+        }); // Fin de la transacción
+
+        // 3. Mapear los resultados a los DTOs de respuesta
+        return inventariosResultados.map(
+            inventario => new InventarioTelaResponseDto(inventario),
+        );
     }
 
   async findAll(filterInventarioTelaDto: FilterInventarioTelaDto = {}): Promise<InventarioTelaResponseDto[]> {

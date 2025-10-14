@@ -71,6 +71,7 @@ export class CarritoService {
                                 carritoId: carrito!.id,
                                 productoId: newItem.productoId,
                                 cantidad: newItem.cantidad,
+                                talla:newItem.talla,
                                 // ⭐ CLAVE: Asignar precio unitario al campo 'precio' ⭐
                                 precio: productoMaestro.precio, 
                             },
@@ -162,7 +163,7 @@ export class CarritoService {
     // Lógica de Ítems: Agregar producto al carrito
     // ----------------------------------------------------------------
     async addItem(carritoId: number, itemDto: CreateCarritoItemDto): Promise<CarritoResponseDto> {
-        const { productoId, cantidad = 1 } = itemDto;
+        const { productoId, cantidad = 1, talla } = itemDto;
 
         // 1. Verificar si el carrito existe y si está 'nuevo'
         const carrito = await this.prisma.carrito.findUnique({ 
@@ -199,6 +200,7 @@ export class CarritoService {
                         carritoId,
                         productoId,
                         cantidad,
+                        talla,
                         precio: producto.precio // Asignar el precio actual del producto
                     }
                 });

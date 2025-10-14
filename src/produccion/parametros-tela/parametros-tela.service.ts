@@ -37,12 +37,12 @@ export class ParametrosTelaService {
 
     // Verificar que la tela existe si se proporciona
     if (telaId) {
-      const tela = await this.prisma.tela.findUnique({
+      const tela = await this.prisma.inventarioTela.findUnique({
         where: { id: telaId }
       });
 
       if (!tela) {
-        throw new NotFoundException(`Tela con ID ${telaId} no encontrada`);
+        throw new NotFoundException(`Inventario de tela  con ID ${telaId} no encontrada`);
       }
     }
 
@@ -61,13 +61,18 @@ export class ParametrosTelaService {
               sku: true
             }
           },
-          tela: {
-            select: {
-              id: true,
-              nombreComercial: true,
-              tipoTela: true
+        tela: {
+            include: {
+                // ⭐ ESTO ES OBLIGATORIO ⭐
+                tela: {
+                    select: {
+                        id: true, 
+                        nombreComercial: true, 
+                        // ... otros campos
+                    }
+                }
             }
-          }
+        },
         }
       });
 
@@ -111,13 +116,18 @@ export class ParametrosTelaService {
               sku: true
             }
           },
-          tela: {
-            select: {
-              id: true,
-              nombreComercial: true,
-              tipoTela: true
+           tela: {
+            include: {
+                // ⭐ ESTO ES OBLIGATORIO ⭐
+                tela: {
+                    select: {
+                        id: true, 
+                        nombreComercial: true, 
+                        // ... otros campos
+                    }
+                }
             }
-          }
+        },
         },
         orderBy: { codigoReferencia: 'asc' },
         skip: (page - 1) * limit,
@@ -150,18 +160,16 @@ export class ParametrosTelaService {
           }
         },
         tela: {
-          select: {
-            id: true,
-            nombreComercial: true,
-            tipoTela: true,
-            composicion: true,
-            proveedor: {
-              select: {
-                id: true,
-                nombre: true
-              }
+            include: {
+                // ⭐ ESTO ES OBLIGATORIO ⭐
+                tela: {
+                    select: {
+                        id: true, 
+                        nombreComercial: true, 
+                        // ... otros campos
+                    }
+                }
             }
-          }
         },
         trabajos: {
           include: {
@@ -203,13 +211,18 @@ export class ParametrosTelaService {
             sku: true
           }
         },
-        tela: {
-          select: {
-            id: true,
-            nombreComercial: true,
-            tipoTela: true
-          }
-        }
+         tela: {
+            include: {
+                // ⭐ ESTO ES OBLIGATORIO ⭐
+                tela: {
+                    select: {
+                        id: true, 
+                        nombreComercial: true, 
+                        // ... otros campos
+                    }
+                }
+            }
+        },
       }
     });
 
@@ -219,7 +232,7 @@ export class ParametrosTelaService {
 
     return new ParametrosTelaResponseDto(parametros);
   }
-
+/*
   async update(id: number, updateParametrosTelaDto: UpdateParametrosTelaDto): Promise<ParametrosTelaResponseDto> {
     const parametros = await this.findOne(id);
     const { productoId, telaId, ...parametrosData } = updateParametrosTelaDto;
@@ -302,7 +315,7 @@ export class ParametrosTelaService {
       }
       throw error;
     }
-  }
+  }*/
 
   async remove(id: number): Promise<void> {
     const parametros = await this.findOne(id);

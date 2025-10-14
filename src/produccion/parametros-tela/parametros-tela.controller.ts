@@ -55,12 +55,13 @@ export class ParametrosTelaController {
   calcularConsumo(@Param('id') id: string, @Body() calculoDto: CalculoConsumoDto) {
     return this.parametrosTelaService.calcularConsumo(+id, calculoDto);
   }
+  /*
 
   @Patch(':id')
   update(@Param('id') id: string, @Body() updateParametrosTelaDto: UpdateParametrosTelaDto) {
     return this.parametrosTelaService.update(+id, updateParametrosTelaDto);
   }
-
+*/
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(@Param('id') id: string) {

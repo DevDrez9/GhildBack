@@ -157,16 +157,7 @@ export class TelaService {
           },
           orderBy: { createdAt: 'desc' }
         },
-        parametrosTelas: {
-          include: {
-            producto: {
-              select: {
-                id: true,
-                nombre: true
-              }
-            }
-          }
-        },
+       
         compraTelaItem: {
           include: {
             compra: {

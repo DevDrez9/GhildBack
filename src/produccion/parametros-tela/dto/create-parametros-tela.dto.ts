@@ -9,10 +9,10 @@ export class CreateParametrosTelaDto {
   nombreModelo: string;
 
   @IsString()
+  @IsOptional()
   tipoTelaRecomendada: string;
 
   @IsString()
- 
   estadoPrenda: string;
 
   @IsString()
@@ -27,18 +27,21 @@ export class CreateParametrosTelaDto {
   tabla?: string;
 
   @IsString()
+  @IsOptional()
   tallasDisponibles: string;
 
   @IsJSON()
   consumoTelaPorTalla: any; // JSON: { "S": 1.5, "M": 1.8, "L": 2.0 }
 
   @IsNumber()
+  @IsOptional()
   consumoTelaPorLote: number;
 
   @IsNumber()
   tiempoFabricacionPorUnidad: number; // en horas
 
   @IsNumber()
+  @IsOptional()
   tiempoTotalPorLote: number; // en horas
 
   @IsNumber()

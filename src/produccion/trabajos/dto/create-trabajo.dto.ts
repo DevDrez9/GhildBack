@@ -21,6 +21,9 @@ export class CreateTrabajoDto {
   cantidad: number;
 
   @IsNumber()
+  pesoTotal:number;
+
+  @IsNumber()
   tiendaId: number;
 
   @IsDateString()

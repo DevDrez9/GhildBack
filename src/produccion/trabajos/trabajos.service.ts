@@ -31,95 +31,135 @@ export class TrabajosService {
   }
 
   async create(createTrabajoDto: CreateTrabajoDto): Promise<TrabajoResponseDto> {
-    const { parametrosTelaId, costureroId, tiendaId, ...trabajoData } = createTrabajoDto;
+        
+        // Desestructurar pesoTotal para la verificación y el descuento
+        const { parametrosTelaId, costureroId, tiendaId, pesoTotal, ...trabajoData } = createTrabajoDto as any; 
+        
+        // 1. **Verificaciones Preliminares (FUERA DE LA TRANSACCIÓN)**
 
-    // Verificar que los parámetros de tela existen
-    const parametrosTela = await this.prisma.parametrosTela.findUnique({
-      where: { id: parametrosTelaId }
-    });
+        // A. Verificar Parámetros de Tela y Obtener Inventario ID
+        const parametrosTela = await this.prisma.parametrosTela.findUnique({
+            where: { id: parametrosTelaId },
+            select: { id: true, telaId: true }
+        });
 
-    if (!parametrosTela) {
-      throw new NotFoundException(`Parámetros de tela con ID ${parametrosTelaId} no encontrados`);
-    }
+        if (!parametrosTela) {
+            throw new NotFoundException(`Parámetros de tela con ID ${parametrosTelaId} no encontrados`);
+        }
+        
+        if (!parametrosTela.telaId) {
+             throw new BadRequestException(`Los Parámetros de Tela con ID ${parametrosTelaId} no tienen un Inventario de Tela asociado.`);
+        }
 
-    // Verificar que el costurero existe si se proporciona
-    if (costureroId) {
-      const costurero = await this.prisma.costurero.findUnique({
-        where: { id: costureroId }
-      });
+        // B. Verificar Stock disponible
+        const inventarioTela = await this.prisma.inventarioTela.findUnique({
+            where: { id: parametrosTela.telaId },
+            select: { id: true, pesoGrupo: true, color: true }
+        });
 
-      if (!costurero) {
-        throw new NotFoundException(`Costurero con ID ${costureroId} no encontrado`);
-      }
-    }
+        if (!inventarioTela) {
+            throw new NotFoundException(`El Inventario de Tela asociado con ID ${parametrosTela.telaId} no fue encontrado.`);
+        }
+        
+        const pesoDisponible = inventarioTela.pesoGrupo;
+        const pesoRequerido = pesoTotal;
+        
+        // Manejo de Decimal de Prisma si es necesario, de lo contrario, asume float/number
+        const pesoDisponibleNum = typeof pesoDisponible === 'number' ? pesoDisponible : (pesoDisponible as any).toNumber();
 
-    // Verificar que la tienda existe
-    const tienda = await this.prisma.tienda.findUnique({
-      where: { id: tiendaId }
-    });
-
-    if (!tienda) {
-      throw new NotFoundException(`Tienda con ID ${tiendaId} no encontrada`);
-    }
-
-    // Generar código de trabajo
-    const codigoTrabajo = createTrabajoDto.codigoTrabajo || await this.generarCodigoTrabajo();
-
-    try {
-      const trabajo = await this.prisma.trabajoEnProceso.create({
-        data: {
-          ...trabajoData,
-          codigoTrabajo,
-          parametrosTela: { connect: { id: parametrosTelaId } },
-          tienda: { connect: { id: tiendaId } },
-          ...(costureroId && { costurero: { connect: { id: costureroId } } }),
-          ...(trabajoData.fechaInicio && { fechaInicio: new Date(trabajoData.fechaInicio) }),
-          ...(trabajoData.fechaFinEstimada && { fechaFinEstimada: new Date(trabajoData.fechaFinEstimada) })
-        },
-        include: {
-          parametrosTela: {
-            include: {
-              producto: {
-                select: {
-                  id: true,
-                  nombre: true
-                }
-              },
-              tela: {
-                select: {
-                  id: true,
-                  nombreComercial: true
-                }
-              }
-            }
-          },
-          costurero: {
-            select: {
-              id: true,
-              nombre: true,
-              apellido: true,
-              estado: true
-            }
-          },
-          tienda: {
-            select: {
-              id: true,
-              nombre: true
-            }
+        if (pesoRequerido > pesoDisponibleNum) {
+            throw new BadRequestException(
+                `Stock insuficiente. Se requieren ${pesoRequerido} kg, pero solo hay ${pesoDisponibleNum} kg disponibles para la tela color '${inventarioTela.color}'.`
+            );
+        }
+        
+        // C. Verificar Costurero (si existe) y Tienda
+        if (costureroId) {
+          const costurero = await this.prisma.costurero.findUnique({ where: { id: costureroId } });
+          if (!costurero) {
+            throw new NotFoundException(`Costurero con ID ${costureroId} no encontrado`);
           }
         }
-      });
-
-      return new TrabajoResponseDto(trabajo);
-    } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError) {
-        if (error.code === 'P2002') {
-          throw new ConflictException('Error al crear el trabajo');
+        const tienda = await this.prisma.tienda.findUnique({ where: { id: tiendaId } });
+        if (!tienda) {
+          throw new NotFoundException(`Tienda con ID ${tiendaId} no encontrada`);
         }
-      }
-      throw error;
+
+        // Generar código de trabajo
+        const codigoTrabajo = trabajoData.codigoTrabajo || await this.generarCodigoTrabajo();
+
+        // 2. **Ejecutar la Transacción: Crear Trabajo y Actualizar Inventario**
+        
+        let trabajoCreado;
+
+        try {
+            await this.prisma.$transaction(async (tx) => {
+                
+               // 2.1. Descontar el peso del inventario de tela
+                await tx.inventarioTela.update({
+                    // ⭐ CORRECCIÓN CLAVE: Usar 'parametrosTela.telaInventarioId' 
+                    // y el operador de aserción '!' para indicar que ya se verificó que no es null ⭐
+                    where: { id: parametrosTela.telaId! }, 
+                    data: { 
+                        pesoGrupo: { decrement: pesoRequerido } 
+                    }
+                });
+
+                // 2.2. Crear el registro de TrabajoEnProceso
+                trabajoCreado = await tx.trabajoEnProceso.create({
+                    data: {
+                        ...trabajoData,
+                        codigoTrabajo,
+                        pesoTotal: pesoRequerido, 
+                        parametrosTela: { connect: { id: parametrosTelaId } },
+                        tienda: { connect: { id: tiendaId } },
+                        ...(costureroId && { costurero: { connect: { id: costureroId } } }),
+                        ...(trabajoData.fechaInicio && { fechaInicio: new Date(trabajoData.fechaInicio) }),
+                        ...(trabajoData.fechaFinEstimada && { fechaFinEstimada: new Date(trabajoData.fechaFinEstimada) })
+                    },
+                    // Incluimos las relaciones para poder devolver el DTO de respuesta
+                    include: {
+                        parametrosTela: {
+                            include: {
+                                producto: { select: { id: true, nombre: true } },
+                                tela: {
+                                    include: {
+                                        tela: {
+                                            select: { id: true, nombreComercial: true, tipoTela: true }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        costurero: { select: { id: true, nombre: true, apellido: true, estado: true } },
+                        tienda: { select: { id: true, nombre: true } }
+                    }
+                });
+            });
+
+            // 3. Devolver la respuesta
+            if (!trabajoCreado) {
+                 // Este caso solo ocurre si la transacción falla en la creación por alguna razón no capturada.
+                throw new Error("La creación del trabajo falló dentro de la transacción.");
+            }
+            return new TrabajoResponseDto(trabajoCreado);
+            
+        } catch (error) {
+            // Manejo de errores de Prisma
+            if (error instanceof Prisma.PrismaClientKnownRequestError) {
+                if (error.code === 'P2002') {
+                    throw new ConflictException(`Error al crear el trabajo: Código '${codigoTrabajo}' duplicado.`);
+                }
+                // Manejo de error específico si el decremento intenta bajar de cero
+                if (error.code === 'P2004') {
+                     // Este error es menos común, pero es bueno manejarlo
+                    throw new BadRequestException("Error en la actualización del inventario: El peso resultante es negativo.");
+                }
+            }
+            // Lanzar el error original si no es un error de Prisma conocido
+            throw error;
+        }
     }
-  }
 
   async findAll(filterTrabajoDto: FilterTrabajoDto = {}): Promise<{ trabajos: TrabajoResponseDto[], total: number }> {
     const {
@@ -197,7 +237,10 @@ export class TrabajosService {
               tela: {
                 select: {
                   id: true,
-                  nombreComercial: true
+                  color:true,
+              tipoTela: true,
+              pesoGrupo:true,
+             tela:true,
                 }
               },
              
@@ -248,8 +291,11 @@ export class TrabajosService {
             tela: {
               select: {
                 id: true,
-                nombreComercial: true,
-                tipoTela: true,
+                color:true,
+              tipoTela: true,
+              pesoGrupo:true,
+             tela:true,
+               
                 proveedor: {
                   select: {
                     id: true,
@@ -302,8 +348,10 @@ export class TrabajosService {
             },
             tela: {
               select: {
-                id: true,
-                nombreComercial: true
+               color:true,
+              tipoTela: true,
+              pesoGrupo:true,
+             tela:true,
               }
             }
           }
@@ -411,7 +459,10 @@ export class TrabajosService {
               tela: {
                 select: {
                   id: true,
-                  nombreComercial: true
+                  color:true,
+              tipoTela: true,
+              pesoGrupo:true,
+             tela:true,
                 }
               }
             }
@@ -480,7 +531,10 @@ export class TrabajosService {
             tela: {
               select: {
                 id: true,
-                nombreComercial: true
+                color:true,
+              tipoTela: true,
+              pesoGrupo:true,
+             tela:true,
               }
             }
           }
@@ -545,7 +599,10 @@ export class TrabajosService {
             tela: {
               select: {
                 id: true,
-                nombreComercial: true
+               color:true,
+              tipoTela: true,
+              pesoGrupo:true,
+             tela:true,
               }
             }
           }
@@ -600,7 +657,10 @@ export class TrabajosService {
             tela: {
               select: {
                 id: true,
-                nombreComercial: true
+                color:true,
+              tipoTela: true,
+              pesoGrupo:true,
+             tela:true,
               }
             }
           }
@@ -650,7 +710,10 @@ export class TrabajosService {
             tela: {
               select: {
                 id: true,
-                nombreComercial: true
+                color:true,
+              tipoTela: true,
+              pesoGrupo:true,
+             tela:true,
               }
             }
           }
