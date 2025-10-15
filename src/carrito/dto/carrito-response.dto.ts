@@ -5,13 +5,13 @@ export class CarritoItemResponseDto {
     productoId: number;
     precio: number;
     talla?: string;
-    
+
     producto: {
         id: number;
         nombre: string;
-        precio: number; 
+        precio: number;
         // ⭐ CAMBIO CLAVE: Campo para la primera imagen ⭐
-        imagenPrincipalUrl: string | null; 
+        imagenPrincipalUrl: string | null;
     } | null;
 
     constructor(item: any) {
@@ -19,14 +19,14 @@ export class CarritoItemResponseDto {
         this.cantidad = item.cantidad;
         this.talla = item.talla;
         this.productoId = item.productoId;
-        this.precio = parseFloat(item.precio || 0); 
+        this.precio = parseFloat(item.precio || 0);
 
         if (item.producto) {
-            
+
             // ⭐ LÓGICA PARA OBTENER LA PRIMERA IMAGEN ⭐
             const imagenPrincipal = item.producto.imagenes
                 // Opcional: ordenar por 'orden' para asegurar que sea la #1
-                ?.sort((a, b) => a.orden - b.orden) 
+                ?.sort((a, b) => a.orden - b.orden)
                 ?.[0]; // Tomar el primer elemento después de ordenar
 
             this.producto = {
@@ -34,10 +34,10 @@ export class CarritoItemResponseDto {
                 nombre: item.producto.nombre,
                 precio: parseFloat(item.producto.precio || 0),
                 // Asignar la URL si se encontró la imagen principal
-                imagenPrincipalUrl: imagenPrincipal?.url || null, 
+                imagenPrincipalUrl: imagenPrincipal?.url || null,
             };
         } else {
-            this.producto = null; 
+            this.producto = null;
         }
     }
 }
@@ -53,6 +53,14 @@ export class CarritoResponseDto {
     precio: number;
     createdAt: Date;
     items: CarritoItemResponseDto[];
+    usuario: {
+        id: number;
+        nombre: string;
+        apellido: number;
+        // ⭐ CAMBIO CLAVE: Campo para la primera imagen ⭐
+        telefono: string,
+        email: string;
+    } | null;
 
     constructor(carrito: any) {
         this.id = carrito.id;
@@ -66,5 +74,17 @@ export class CarritoResponseDto {
         this.precio = carrito.precio || 0;
         this.createdAt = carrito.createdAt;
         this.items = carrito.items?.map(item => new CarritoItemResponseDto(item)) || [];
+        if (carrito.usuario) {
+            this.usuario = {
+                id: carrito.usuario.id,
+                
+                nombre: carrito.usuario.nombre,
+                apellido: carrito.usuario.apellido,
+                // ⭐ CAMBIO CLAVE: Campo para la primera imagen ⭐
+                telefono: carrito.usuario.telefono,
+                email: carrito.usuario.email
+            };
+        }
+
     }
 }

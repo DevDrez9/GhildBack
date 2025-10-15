@@ -16,6 +16,10 @@ export class CreateUsuarioDto {
   @IsOptional()
   apellido?: string;
 
+  @IsString()
+  @IsOptional()
+  telefono?: string;
+
   @IsEnum(Rol)
   @IsOptional()
   rol?: Rol;

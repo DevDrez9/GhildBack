@@ -58,6 +58,12 @@ export class CarritoController {
         return this.carritoService.complete(+id);
     }
 
+
+    @Patch(':id/cancelado')
+    async cancelado(@Param('id') id: string): Promise<CarritoResponseDto> {
+        return this.carritoService.cancelar(+id);
+    }
+
     // ----------------------------------------------------------------
     // 5. OBTENER Carrito por ID
     // GET /carritos/:id

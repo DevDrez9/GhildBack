@@ -248,6 +248,25 @@ export class CarritoService {
 
         return new CarritoResponseDto(updatedCarrito);
     }
+    async cancelar(carritoId: number): Promise<CarritoResponseDto> {
+        const carrito = await this.prisma.carrito.findUnique({ where: { id: carritoId } });
+
+        if (!carrito) {
+            throw new NotFoundException(`Carrito con ID ${carritoId} no encontrado.`);
+        }
+        if (carrito.estado !== 'pendiente') {
+            throw new BadRequestException('Solo se puede finalizar la compra de un carrito "nuevo".');
+        }
+
+        // Finalizar la compra: cambiar el estado a "pendiente"
+        const updatedCarrito = await this.prisma.carrito.update({
+            where: { id: carritoId },
+            data: { estado: 'cancelado' },
+            include: { items: true }
+        });
+
+        return new CarritoResponseDto(updatedCarrito);
+    }
 
     // ----------------------------------------------------------------
     // Lógica de Terminación (Ejecutada después de procesar el pago/orden)
@@ -333,12 +352,15 @@ export class CarritoService {
             estadoFilter = { estado: 'pendiente' };
         } else if (estadoFiltro === CarritoEstado.TERMINADO) {
             estadoFilter = { estado: 'terminado' };
+        } else if (estadoFiltro === CarritoEstado.CANCELDO) {
+            estadoFilter = { estado: 'cancelado' };
         } else if (estadoFiltro === CarritoEstado.TODOS) {
             // ⭐ CAMBIO CLAVE: Usamos 'OR' para incluir solo 'pendiente' y 'terminado'
             estadoFilter = {
                 OR: [
                     { estado: 'pendiente' },
                     { estado: 'terminado' },
+                    { estado: 'cancelado' },
                 ]
             };
         } else {
@@ -355,10 +377,12 @@ export class CarritoService {
             where,
             // ... (includes, orderBy, etc.)
             include: { 
+                usuario: true,
                 items: {
                     include: { producto: true }
                 },
-                usuario: { select: { id: true, nombre: true } }
+                
+                
             },
             orderBy: { createdAt: 'desc' }
         });

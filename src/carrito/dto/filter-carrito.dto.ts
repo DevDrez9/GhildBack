@@ -5,6 +5,7 @@ export enum CarritoEstado {
     NUEVO = 'nuevo',
     PENDIENTE = 'pendiente',
     TERMINADO = 'terminado',
+    CANCELDO = 'cancelado',
     TODOS = 'todos' // Valor para indicar que no hay filtro de estado
 }
 

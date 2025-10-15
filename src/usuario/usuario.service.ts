@@ -44,6 +44,7 @@ export class UsuarioService {
         apellido: true,
         rol: true,
         activo: true,
+        telefono:true,
         createdAt: true,
         updatedAt: true,
         tiendas: {
@@ -65,6 +66,7 @@ export class UsuarioService {
         apellido: true,
         rol: true,
         activo: true,
+        telefono:true,
         createdAt: true,
         updatedAt: true,
         tiendas: {
@@ -87,6 +89,7 @@ async findOne(id: number) {
         apellido: true,
         rol: true,
         activo: true,
+        telefono:true,
         createdAt: true,
         updatedAt: true,
         tiendas: {
@@ -152,6 +155,7 @@ async findOne(id: number) {
         email: true,
         nombre: true,
         apellido: true,
+        telefono:true,
         rol: true,
         activo: true,
         createdAt: true,
@@ -206,7 +210,8 @@ async findOne(id: number) {
             select: {
               id: true,
               email: true,
-              nombre: true
+              nombre: true,
+              telefono:true,
             }
           },
           tienda: {

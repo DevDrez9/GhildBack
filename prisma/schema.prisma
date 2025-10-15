@@ -172,6 +172,7 @@ model Usuario {
   apellido  String?
   rol       Rol      @default(USER)
   activo    Boolean  @default(true)
+  telefono  String?
   tiendas   UsuarioTienda[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
