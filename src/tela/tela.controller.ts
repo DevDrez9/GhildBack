@@ -82,6 +82,10 @@ export class TelaController {
   unassignParametroFisico(@Param('id') id: string) {
     return this.telaService.unassignParametroFisico(+id);
   }
+  @Delete(':id')
+  eliminarTela(@Param('id') id: string) {
+    return this.telaService.deleteTela(+id);
+  }
 
   @Get('parametro-fisico/:parametroId')
   getTelasByParametroFisico(@Param('parametroId') parametroId: string) {

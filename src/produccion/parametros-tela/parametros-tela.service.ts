@@ -88,7 +88,7 @@ export class ParametrosTelaService {
   }
 
   async findAll(filterParametrosTelaDto: FilterParametrosTelaDto = {}): Promise<{ parametros: ParametrosTelaResponseDto[], total: number }> {
-    const { search, tipoTelaRecomendada, estadoPrenda, productoId, telaId, page = 1, limit = 10 } = filterParametrosTelaDto;
+    const { search, tipoTelaRecomendada, estadoPrenda, productoId, telaId, page = 1, limit = 50 } = filterParametrosTelaDto;
 
     const where: Prisma.ParametrosTelaWhereInput = {};
 
@@ -232,10 +232,10 @@ export class ParametrosTelaService {
 
     return new ParametrosTelaResponseDto(parametros);
   }
-/*
+
   async update(id: number, updateParametrosTelaDto: UpdateParametrosTelaDto): Promise<ParametrosTelaResponseDto> {
     const parametros = await this.findOne(id);
-    const { productoId, telaId, ...parametrosData } = updateParametrosTelaDto;
+    const { productoId, ...parametrosData } = updateParametrosTelaDto;
 
     try {
       const data: Prisma.ParametrosTelaUpdateInput = { ...parametrosData };
@@ -269,10 +269,10 @@ export class ParametrosTelaService {
       }
 
       // Manejar actualización de la tela
-      if (telaId !== undefined) {
+     /* if (telaId !== undefined) {
         if (telaId === null) {
           data.tela = { disconnect: true };
-        } else if (telaId !== parametros.telaId) {
+        } else if (telaId !== parametros.tela?.telaId) {
           const tela = await this.prisma.tela.findUnique({
             where: { id: telaId }
           });
@@ -283,7 +283,7 @@ export class ParametrosTelaService {
 
           data.tela = { connect: { id: telaId } };
         }
-      }
+      }*/
 
       const updatedParametros = await this.prisma.parametrosTela.update({
         where: { id },
@@ -296,11 +296,9 @@ export class ParametrosTelaService {
               sku: true
             }
           },
-          tela: {
-            select: {
-              id: true,
-              nombreComercial: true,
-              tipoTela: true
+          tela:{
+            include: {
+              tela:true
             }
           }
         }
@@ -315,7 +313,7 @@ export class ParametrosTelaService {
       }
       throw error;
     }
-  }*/
+  }
 
   async remove(id: number): Promise<void> {
     const parametros = await this.findOne(id);

@@ -1,14 +1,15 @@
 import { IsString, IsOptional, IsBoolean } from 'class-validator';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 
 export class FilterProveedorDto {
   @IsString()
   @IsOptional()
   search?: string;
 
-  @IsBoolean()
+  
   @IsOptional()
-  @Transform(({ value }) => value === 'true')
+  @Type(() => Boolean) 
+    @IsBoolean()
   activo?: boolean;
 
   @IsString()

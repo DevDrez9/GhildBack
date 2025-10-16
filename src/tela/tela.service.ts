@@ -447,9 +447,12 @@ export class TelaService {
     }
 
 
-
-    await this.prisma.tela.delete({
+    try{
+ await this.prisma.tela.delete({
       where: { id }
     });
+    }catch(error){
+        throw new NotFoundException(`La Tela esta siendo usada en otros datos.`);
+    }
   }
 }

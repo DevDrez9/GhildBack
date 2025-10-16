@@ -367,15 +367,15 @@ async update(id: number, updateProductoDto: UpdateProductoDto): Promise<Producto
     }
 }
 
-  async remove(id: number): Promise<void> {
-    await this.findOne(id); // Verificar que existe
-
-    // En lugar de eliminar, podrías marcar como inactivo
-    // o implementar soft delete según tu schema
-    await this.prisma.producto.delete({
-      where: { id }
-    });
-  }
+    async remove(id: number): Promise<void> {
+      await this.findOne(id); // Verificar que existe
+  
+      // En lugar de eliminar, podrías marcar como inactivo
+      // o implementar soft delete según tu schema
+      await this.prisma.producto.delete({
+        where: { id }
+      });
+    }
 
   async updateStock(id: number, cantidad: number, tipo: 'incremento' | 'decremento'): Promise<ProductoResponseDto> {
     const producto = await this.findOne(id);
@@ -406,7 +406,6 @@ async update(id: number, updateProductoDto: UpdateProductoDto): Promise<Producto
    async getProductosDestacados(tiendaId?: number): Promise<ProductoResponseDto[]> {
     const where: Prisma.ProductoWhereInput = {
       esDestacado: true,
-      stock: { gt: 0 },
       ...(tiendaId && { tiendaId })
     };
 
@@ -431,7 +430,6 @@ async update(id: number, updateProductoDto: UpdateProductoDto): Promise<Producto
   async getProductosOferta(tiendaId?: number): Promise<ProductoResponseDto[]> {
     const where: Prisma.ProductoWhereInput = {
       enOferta: true,
-      stock: { gt: 0 },
       ...(tiendaId && { tiendaId })
     };
 
@@ -456,7 +454,6 @@ async update(id: number, updateProductoDto: UpdateProductoDto): Promise<Producto
   async getProductosNuevos(tiendaId?: number): Promise<ProductoResponseDto[]> {
     const where: Prisma.ProductoWhereInput = {
       esNuevo: true,
-      stock: { gt: 0 },
       ...(tiendaId && { tiendaId })
     };
 

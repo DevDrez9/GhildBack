@@ -46,15 +46,19 @@ export class ProveedorService {
       throw error;
     }
   }
-
-  async findAll(filterProveedorDto: FilterProveedorDto = {}): Promise<ProveedorResponseDto[]> {
+async findAll(filterProveedorDto: FilterProveedorDto = {}): Promise<ProveedorResponseDto[]> {
     const { search, activo, ruc } = filterProveedorDto;
 
     const where: Prisma.ProveedorWhereInput = {};
 
-    if (activo !== undefined) where.activo = activo;
-    if (ruc) where.ruc = { contains: ruc };
-
+    // ⭐ CLAVE: Solo aplica el filtro si 'activo' es estrictamente true ⭐
+    if (activo === true) {
+        where.activo = true; 
+    }
+    // Si activo es false, undefined, o null, la condición es falsa
+    // y no se añade ningún filtro por estado, devolviendo todos.
+    
+    // Lógica para el filtro 'search' (se mantiene igual)
     if (search) {
       where.OR = [
         { nombre: { contains: search, mode: 'insensitive' } },
@@ -64,7 +68,7 @@ export class ProveedorService {
     }
 
     const proveedores = await this.prisma.proveedor.findMany({
-      where,
+      where, 
       include: {
         tiendas: {
           include: {
@@ -89,7 +93,7 @@ export class ProveedorService {
     );
 
     return proveedoresConTotal;
-  }
+}
 async findAllMinimo(filterProveedorDto: FilterProveedorDto = {}): Promise<ProveedorResponseDto[]> {
   const { search, activo, ruc } = filterProveedorDto;
 
@@ -98,10 +102,7 @@ async findAllMinimo(filterProveedorDto: FilterProveedorDto = {}): Promise<Provee
   // Filtro por activo (si se proporciona)
   
 
-  // Filtro por RUC (solo si se proporciona y no está vacío)
-  if (ruc && ruc.trim() !== '') {
-    where.ruc = { contains: ruc };
-  }
+  
 
   // Filtro de búsqueda (solo si se proporciona y no está vacío)
   if (search && search.trim() !== '') {

@@ -51,7 +51,7 @@ export class SucursalService {
 
   async findAll(): Promise<SucursalResponseDto[]> {
     const sucursales = await this.prisma.sucursal.findMany({
-      where: { activa: true },
+      
       include: {
         tienda: true,
         inventario: {
@@ -148,8 +148,7 @@ export class SucursalService {
 
     const sucursales = await this.prisma.sucursal.findMany({
       where: { 
-        tiendaId,
-        activa: true 
+        tiendaId
       },
       include: {
         tienda: true,
