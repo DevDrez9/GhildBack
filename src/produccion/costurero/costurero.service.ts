@@ -6,7 +6,7 @@ import { UpdateEstadoCostureroDto } from './dto/update-estado-costurero.dto';
 import { FilterCostureroDto } from './dto/filter-costurero.dto';
 import { CostureroResponseDto } from './dto/costurero-response.dto';
 import { PrismaService } from 'src/prisma.service';
-import { Prisma } from 'generated/prisma/client';
+import { CalidadProducto, Prisma } from 'generated/prisma/client';
 
 @Injectable()
 export class CostureroService {
@@ -335,38 +335,74 @@ export class CostureroService {
   }
 
   async getEstadisticas(id: number): Promise<any> {
-    const costurero = await this.findOne(id);
+        const costurero = await this.findOne(id);
 
-    const [
-      totalTrabajos,
-      trabajosPendientes,
-      trabajosEnProceso,
-      trabajosCompletados,
-      trabajosEsteMes
-    ] = await Promise.all([
-      this.prisma.trabajoEnProceso.count({ where: { costureroId: id } }),
-      this.prisma.trabajoEnProceso.count({ where: { costureroId: id, estado: 'PENDIENTE' } }),
-      this.prisma.trabajoEnProceso.count({ where: { costureroId: id, estado: 'EN_PROCESO' } }),
-      this.prisma.trabajoEnProceso.count({ where: { costureroId: id, estado: 'COMPLETADO' } }),
-      this.prisma.trabajoEnProceso.count({
-        where: {
-          costureroId: id,
-          createdAt: {
-            gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-          }
+        // ⭐ 1. Definir los valores numéricos para cada estado de calidad ⭐
+        const calidadValores: Record<CalidadProducto, number> = {
+            EXCELENTE: 5,
+            BUENA: 4,
+            REGULAR: 3,
+            DEFECTUOSO: 2
+          
+        };
+
+        const [
+            totalTrabajos,
+            trabajosPendientes,
+            trabajosEnProceso,
+            trabajosCompletados,
+            trabajosEsteMes,
+            // ⭐ 2. Obtener la lista de calidades en lugar de agregar ⭐
+            trabajosFinalizadosParaCalidad
+        ] = await Promise.all([
+            this.prisma.trabajoEnProceso.count({ where: { costureroId: id } }),
+            this.prisma.trabajoEnProceso.count({ where: { costureroId: id, estado: 'PENDIENTE' } }),
+            this.prisma.trabajoEnProceso.count({ where: { costureroId: id, estado: 'EN_PROCESO' } }),
+            this.prisma.trabajoEnProceso.count({ where: { costureroId: id, estado: 'COMPLETADO' } }),
+            this.prisma.trabajoEnProceso.count({
+                where: {
+                    costureroId: id,
+                    createdAt: {
+                        gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+                    }
+                }
+            }),
+            // Obtenemos todos los trabajos finalizados para calcular el promedio manualmente
+            this.prisma.trabajoFinalizado.findMany({
+                where: {
+                    trabajoEnProceso: {
+                        costureroId: id,
+                    },
+                },
+                select: {
+                    calidad: true,
+                },
+            }),
+        ]);
+
+        // ⭐ 3. Calcular el promedio de calidad manualmente ⭐
+        let promedioCalidad = 0;
+        if (trabajosFinalizadosParaCalidad.length > 0) {
+            const sumaCalidad = trabajosFinalizadosParaCalidad.reduce((total, trabajo) => {
+                const valorNumerico = calidadValores[trabajo.calidad] || 0; // Usar el mapa de valores
+                return total + valorNumerico;
+            }, 0);
+            promedioCalidad = sumaCalidad / trabajosFinalizadosParaCalidad.length;
         }
-      })
-    ]);
 
-    return {
-      costurero: new CostureroResponseDto(costurero),
-      estadisticas: {
-        totalTrabajos,
-        trabajosPendientes,
-        trabajosEnProceso,
-        trabajosCompletados,
-        trabajosEsteMes
-      }
-    };
-  }
+        return {
+            costurero: new CostureroResponseDto(costurero),
+            estadisticas: {
+                totalTrabajos,
+                trabajosPendientes,
+                trabajosEnProceso,
+                trabajosCompletados,
+                trabajosEsteMes,
+                promedioCalidad: parseFloat(promedioCalidad.toFixed(2)) // Redondear a 2 decimales
+            }
+        };
+    }
+
+    
+  
 }

@@ -42,7 +42,9 @@ export class TrabajoFinalizadoResponseDto {
           nombreModelo: partial.trabajoEnProceso.parametrosTela.nombreModelo,
           producto: partial.trabajoEnProceso.parametrosTela.producto ? {
             id: partial.trabajoEnProceso.parametrosTela.producto.id,
-            nombre: partial.trabajoEnProceso.parametrosTela.producto.nombre
+            nombre: partial.trabajoEnProceso.parametrosTela.producto.nombre,
+           imagenes:partial.trabajoEnProceso.parametrosTela.producto.imagenes
+
           } : undefined
         } : undefined,
         costurero: partial.trabajoEnProceso.costurero ? {

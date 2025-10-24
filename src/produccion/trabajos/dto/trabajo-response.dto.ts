@@ -49,7 +49,7 @@ export class TrabajoResponseDto {
         nombreModelo: partial.parametrosTela.nombreModelo,
         producto: partial.parametrosTela.producto ? {
           id: partial.parametrosTela.producto.id,
-          nombre: partial.parametrosTela.producto.nombre
+          nombre: partial.parametrosTela.producto.nombre, imagenes:partial.parametrosTela.producto.imagenes
         } : undefined,
         tela: partial.parametrosTela.tela ? {
           id: partial.parametrosTela.tela.id,

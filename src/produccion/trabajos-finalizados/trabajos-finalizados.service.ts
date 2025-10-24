@@ -83,7 +83,8 @@ export class TrabajosFinalizadosService {
                     select: {
                       id: true,
                       nombre: true,
-                      sku: true
+                      sku: true,
+                      imagenes: true
                     }
                   }
                 }
@@ -134,6 +135,7 @@ export class TrabajosFinalizadosService {
                     id: true,
                     nombre: true,
                     sku: true,
+                    imagenes: true,
                     categoria: {
                       select: {
                         id: true,
@@ -211,7 +213,8 @@ export class TrabajosFinalizadosService {
                   select: {
                     id: true,
                     nombre: true,
-                    sku: true
+                    sku: true,
+                    imagenes: true
                   }
                 }
               }
@@ -265,7 +268,8 @@ export class TrabajosFinalizadosService {
                   select: {
                     id: true,
                     nombre: true,
-                    sku: true
+                    sku: true,
+                    imagenes: true
                   }
                 }
               }
@@ -399,7 +403,8 @@ export class TrabajosFinalizadosService {
                       select: {
                         id: true,
                         nombre: true,
-                        sku: true
+                        sku: true, 
+                        imagenes: true
                       }
                     }
                   }
@@ -549,7 +554,8 @@ export class TrabajosFinalizadosService {
                   producto: {
                     select: {
                       id: true,
-                      nombre: true
+                      nombre: true,
+                      imagenes: true
                     }
                   }
                 }

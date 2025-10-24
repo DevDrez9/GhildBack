@@ -231,7 +231,8 @@ export class TrabajosService {
               producto: {
                 select: {
                   id: true,
-                  nombre: true
+                  nombre: true,
+                  imagenes:true
                 }
               },
               tela: {
