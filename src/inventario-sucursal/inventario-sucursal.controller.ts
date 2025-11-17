@@ -32,6 +32,7 @@ export class InventarioSucursalController {
   findAll(@Query() filterInventarioSucursalDto: FilterInventarioSucursalDto) {
     return this.inventarioSucursalService.findAll(filterInventarioSucursalDto);
   }
+  /*
 
   @Get('bajo-stock')
   getProductosBajoStock(
@@ -44,7 +45,7 @@ export class InventarioSucursalController {
       tiendaId ? +tiendaId : undefined,
       stockMinimo ? +stockMinimo : undefined
     );
-  }
+  }*/
 
   @Get('sin-stock')
   getProductosSinStock(
@@ -130,7 +131,7 @@ export class InventarioSucursalController {
   transferirEntreSucursales(
     @Param('origenId') origenId: string,
     @Param('destinoId') destinoId: string,
-    @Query('cantidad') cantidad: string,
+    @Query('cantidad') cantidad:  Record<string, number>,
     @Query('motivo') motivo: string,
     @Request() req
   ) {
@@ -138,7 +139,7 @@ export class InventarioSucursalController {
     return this.inventarioSucursalService.transferirEntreSucursales(
       +origenId,
       +destinoId,
-      +cantidad,
+      cantidad,
       motivo,
       usuarioId
     );

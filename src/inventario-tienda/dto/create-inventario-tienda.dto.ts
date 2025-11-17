@@ -1,4 +1,4 @@
-import { IsNumber, IsOptional } from 'class-validator';
+import { IsNumber, IsObject, IsOptional } from 'class-validator';
 
 export class CreateInventarioTiendaDto {
   @IsNumber()
@@ -7,9 +7,10 @@ export class CreateInventarioTiendaDto {
   @IsNumber()
   tiendaId!: number;
 
-  @IsNumber()
+  // CAMBIO: 'stock' ahora es un objeto opcional.
+  @IsObject()
   @IsOptional()
-  stock?: number;
+  stock?: Record<string, number>;
 
   @IsNumber()
   @IsOptional()

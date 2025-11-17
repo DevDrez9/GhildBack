@@ -12,6 +12,9 @@ export class CreateVentaItemDto {
 
  @IsNumber()
   precio!: number;
+
+  @IsString()
+  talla!: string;
 }
 
 export class CreateVentaDto {

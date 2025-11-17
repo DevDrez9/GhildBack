@@ -24,6 +24,7 @@ model ConfigWeb {
   updatedAt   DateTime @updatedAt
   tiendas     Tienda[]
   banners     ImagenBanner[]
+  imagenQr    String?
 }
 
 model ImagenBanner {
@@ -98,6 +99,7 @@ model Producto {
   esDestacado    Boolean   @default(false)
   stock          Int       @default(0)
   stockMinimo    Int       @default(5)
+  tallas         String?
   sku            String?   @unique
   imagenUrl      String?   @map("imagen_url")
   categoriaId    Int
@@ -238,6 +240,7 @@ model VentaItem {
   id         Int      @id @default(autoincrement())
   cantidad   Int      @default(1)
   precio     Decimal
+  talla      String 
   productoId Int
   producto   Producto @relation(fields: [productoId], references: [id])
   ventaId    Int
@@ -269,7 +272,8 @@ model InventarioTienda {
   producto    Producto @relation(fields: [productoId], references: [id], map: "fk_inv_tienda_producto")
   tiendaId    Int
   tienda      Tienda   @relation(fields: [tiendaId], references: [id], map: "fk_inv_tienda_tienda")
-  stock       Int      @default(0)
+  stock       Json     @default("{}")
+
   stockMinimo Int      @default(5)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -284,7 +288,7 @@ model InventarioSucursal {
   producto    Producto @relation(fields: [productoId], references: [id], map: "fk_inv_sucursal_producto")
   sucursalId  Int
   sucursal    Sucursal @relation(fields: [sucursalId], references: [id], map: "fk_inv_sucursal_sucursal")
-  stock       Int      @default(0)
+  stock        Json     @default("{}")
   stockMinimo Int      @default(5)
   tiendaId    Int
   tienda      Tienda   @relation(fields: [tiendaId], references: [id], map: "fk_inv_sucursal_tienda")
@@ -309,7 +313,7 @@ model TransferenciaInventario {
   destinoTipo TipoDestinoTransferencia
   destinoId   Int  // Puede ser tiendaId o sucursalId según destinoTipo
   
-  cantidad    Int
+  cantidad     Json     @default("{}")
   productoId  Int
   producto    Producto @relation(fields: [productoId], references: [id], map: "fk_transferencia_producto")
   usuarioId   Int
@@ -324,7 +328,7 @@ model TransferenciaInventario {
 model MovimientoInventario {
   id          Int                @id @default(autoincrement())
   tipo        TipoMovimiento
-  cantidad    Int
+  cantidad     Json     @default("{}")
   productoId  Int
   producto    Producto           @relation(fields: [productoId], references: [id], map: "fk_movimiento_producto")
   motivo      String?
@@ -351,8 +355,8 @@ model MovimientoInventario {
   updatedAt   DateTime           @updatedAt
   
   // Stock antes y después del movimiento
-  stockAnterior Int?
-  stockNuevo    Int?
+  stockAnterior   Json?
+  stockNuevo      Json?
   
   // UBICACIÓN DEL MOVIMIENTO (solo una de estas por movimiento)
   inventarioTiendaId Int?
@@ -527,8 +531,8 @@ model CompraTelaItem {
   precioKG     Decimal
   telaId       Int
   tela         Tela           @relation(fields: [telaId], references: [id])
-  compraId     Int
-  compra       CompraProveedor @relation(fields: [compraId], references: [id])
+  compraId     Int?
+  compra       CompraProveedor? @relation(fields: [compraId], references: [id])
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
 }
@@ -616,7 +620,7 @@ model TrabajoFinalizado {
   trabajoEnProcesoId Int             @unique
   trabajoEnProceso  TrabajoEnProceso @relation(fields: [trabajoEnProcesoId], references: [id])
   fechaFinalizacion DateTime
-  cantidadProducida Int
+  cantidadProducida String
   calidad           CalidadProducto @default(EXCELENTE)
   notas             String?
   costo             Decimal?

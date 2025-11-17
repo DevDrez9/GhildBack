@@ -115,4 +115,14 @@ export class VentaController {
         
         return this.ventaService.getVentasGlobalesPorProducto(idProducto, idTienda);
     }
+
+
+    @Get('estadisticas/canales')
+  getEstadisticasCanales(
+    @Query('year') year: string, 
+    @Query('tiendaId') tiendaId?: string
+  ) {
+    const anio = year ? parseInt(year) : new Date().getFullYear();
+    return this.ventaService.getEstadisticasCanalVenta(anio, tiendaId ? +tiendaId : undefined);
+  }
 }

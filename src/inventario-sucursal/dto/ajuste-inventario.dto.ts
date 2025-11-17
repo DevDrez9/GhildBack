@@ -1,8 +1,13 @@
-import { IsNumber, IsString, IsOptional } from 'class-validator';
+import { IsNumber, IsString, IsOptional, IsObject, IsNotEmpty } from 'class-validator';
 
 export class AjusteInventarioDto {
-  @IsNumber()
-  cantidad!: number;
+  /**
+   * ✅ MODIFICADO: La cantidad a ajustar ahora es un objeto por tallas.
+   * @example { "S": 5, "M": -2 }
+   */
+  @IsObject()
+  @IsNotEmpty()
+  cantidad!: Record<string, number>;
 
   @IsString()
   motivo!: string;

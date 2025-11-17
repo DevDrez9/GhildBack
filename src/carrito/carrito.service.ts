@@ -14,8 +14,7 @@ export class CarritoService {
     // ----------------------------------------------------------------
     // Lógica principal: CREAR o ENCONTRAR un carrito 'nuevo'
     // ----------------------------------------------------------------
-     async createOrFind(createCarritoDto: CreateCarritoDto): Promise<CarritoResponseDto> {
-    
+    async createOrFind(createCarritoDto: CreateCarritoDto): Promise<CarritoResponseDto> {
     const clienteId = createCarritoDto.clienteId;
     
     // 1. Buscar carrito existente con estado 'nuevo'
@@ -30,83 +29,74 @@ export class CarritoService {
 
     // 2. Si el carrito EXISTE, AGREGAR o ACTUALIZAR los ítems
     if (carrito) {
-        
         if (createCarritoDto.items && createCarritoDto.items.length > 0) {
             
-            // ⭐ NUEVO: Obtener precios de todos los productos a manipular ⭐
+            // Obtener precios de productos
             const productoIds = createCarritoDto.items.map(item => item.productoId);
             const productos = await this.prisma.producto.findMany({
                 where: { id: { in: productoIds } },
                 select: { id: true, precio: true } 
             });
 
-            let totalRecalculado: number = 0; // Variable para almacenar el nuevo total del carrito
-
             await this.prisma.$transaction(async (tx) => {
-                
                 for (const newItem of createCarritoDto.items!) { 
-                    const existingItem = carrito!.items.find(
-                        item => item.productoId === newItem.productoId
-                    );
-
                     const productoMaestro = productos.find(p => p.id === newItem.productoId);
 
                     if (!productoMaestro) {
-                        throw new BadRequestException(`Producto con ID ${newItem.productoId} no encontrado para agregar.`);
+                        throw new BadRequestException(`Producto con ID ${newItem.productoId} no encontrado.`);
                     }
 
+                    // 🚨 CORRECCIÓN AQUÍ: Buscar coincidencia por Producto ID **Y** Talla
+                    const existingItem = carrito!.items.find(
+                        item => item.productoId === newItem.productoId && item.talla === newItem.talla
+                    );
+
                     if (existingItem) {
-                        // Ítem existente: Se incrementa la cantidad
+                        // Si ya existe el mismo producto con la misma talla -> Sumar cantidad
                         await tx.carritoItem.update({
                             where: { id: existingItem.id },
                             data: {
                                 cantidad: { increment: newItem.cantidad },
-                                // El precio unitario se mantiene
                             },
                         });
                     } else {
-                        // Ítem nuevo: Se crea
+                        // Si es nueva talla o nuevo producto -> Crear ítem
                         await tx.carritoItem.create({
                             data: {
                                 carritoId: carrito!.id,
                                 productoId: newItem.productoId,
                                 cantidad: newItem.cantidad,
-                                talla:newItem.talla,
-                                // ⭐ CLAVE: Asignar precio unitario al campo 'precio' ⭐
+                                // 🚨 Asegurarse de guardar la talla
+                                talla: newItem.talla, 
                                 precio: productoMaestro.precio, 
                             },
                         });
                     }
                 }
                 
-                // ⭐ CLAVE: Recalcular y actualizar el precio total del carrito ⭐
+                // Recalcular total (lógica existente)
                 const itemsActualizados = await tx.carritoItem.findMany({ where: { carritoId: carrito?.id } });
-                
-                totalRecalculado = itemsActualizados.reduce((sum, item) => {
-                    // Usamos COALESCE/Nullish Coalescing (??) para manejar posibles NULLs de Decimal
+                const totalRecalculado = itemsActualizados.reduce((sum, item) => {
                     const itemPrice = item.precio?.toNumber() ?? 0; 
                     return sum + (itemPrice * item.cantidad);
                 }, 0);
                 
-                // Actualizar el precio total del carrito padre
                 await tx.carrito.update({
                     where: { id: carrito?.id },
                     data: { precio: new Prisma.Decimal(totalRecalculado) },
                 });
             });
             
-            // Recargar el carrito (incluyendo ítems y el precio total actualizado)
+            // Recargar carrito
             carrito = await this.prisma.carrito.findUnique({
                 where: { id: carrito.id },
-                include: { items: true } // Asumo que esta recarga ya incluye las relaciones para el DTO
+                include: { items: true }
             });
         }
         
     } 
-    
-    // 3. Si no existe, crear un carrito 'nuevo' con sus ítems
+    // 3. Si NO EXISTE, crear carrito nuevo
     else {
-        
         const productoIds = createCarritoDto.items?.map(item => item.productoId) || [];
         const productos = await this.prisma.producto.findMany({
             where: { id: { in: productoIds } },
@@ -115,24 +105,18 @@ export class CarritoService {
         
         let totalCarritoInicial: number = 0;
 
-        // Mapear datos de ítems con precio unitario
         const itemData = createCarritoDto.items?.map(item => {
             const producto = productos.find(p => p.id === item.productoId);
-            
-            if (!producto) {
-                throw new BadRequestException(`Producto con ID ${item.productoId} no encontrado.`);
-            }
+            if (!producto) throw new BadRequestException(`Producto no encontrado.`);
             
             const cantidad = item.cantidad!;
-            
-            // Calcular el total de la línea y sumarlo al total del carrito
-            const itemTotal = producto.precio.toNumber() * cantidad;
-            totalCarritoInicial += itemTotal;
+            totalCarritoInicial += producto.precio.toNumber() * cantidad;
 
             return {
                 productoId: item.productoId,
                 cantidad: item.cantidad,
-                // ⭐ CLAVE: Asignar precio unitario al campo 'precio' ⭐
+                // 🚨 Asegurarse de guardar la talla aquí también
+                talla: item.talla, 
                 precio: producto.precio, 
             };
         }) || [];
@@ -146,10 +130,9 @@ export class CarritoService {
                 telefono: createCarritoDto.telefono,
                 direccion: createCarritoDto.direccion,
                 notas: createCarritoDto.notas,
-                // ⭐ CLAVE: Asignar el precio total inicial ⭐
                 precio: new Prisma.Decimal(totalCarritoInicial),
                 items: {
-                    create: itemData,
+                    create: itemData, // Prisma creará los items con el campo 'talla'
                 }
             },
             include: { items: true }
@@ -157,7 +140,7 @@ export class CarritoService {
     }
 
     return new CarritoResponseDto(carrito);
-}
+  }
 
     // ----------------------------------------------------------------
     // Lógica de Ítems: Agregar producto al carrito
@@ -242,7 +225,26 @@ export class CarritoService {
         // Finalizar la compra: cambiar el estado a "pendiente"
         const updatedCarrito = await this.prisma.carrito.update({
             where: { id: carritoId },
-            data: { estado: 'pendiente' },
+            data: { estado: 'pendiente', notas:"no pagado" },
+            include: { items: true }
+        });
+
+        return new CarritoResponseDto(updatedCarrito);
+    }
+     async checkoutPagado(carritoId: number): Promise<CarritoResponseDto> {
+        const carrito = await this.prisma.carrito.findUnique({ where: { id: carritoId } });
+
+        if (!carrito) {
+            throw new NotFoundException(`Carrito con ID ${carritoId} no encontrado.`);
+        }
+        if (carrito.estado !== 'nuevo') {
+            throw new BadRequestException('Solo se puede finalizar la compra de un carrito "nuevo".');
+        }
+
+        // Finalizar la compra: cambiar el estado a "pendiente"
+        const updatedCarrito = await this.prisma.carrito.update({
+            where: { id: carritoId },
+            data: { estado: 'pendiente', notas: "pagado" },
             include: { items: true }
         });
 
@@ -284,7 +286,7 @@ export class CarritoService {
         // Cambiar estado a "terminado"
         const updatedCarrito = await this.prisma.carrito.update({
             where: { id: carritoId },
-            data: { estado: 'terminado' },
+            data: { estado: 'terminado', notas:"pagado" },
             include: { items: true }
         });
 

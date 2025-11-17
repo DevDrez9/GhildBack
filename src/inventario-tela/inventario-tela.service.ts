@@ -179,6 +179,16 @@ export class InventarioTelaService {
                 
                 // Agregar el resultado a la lista de resultados de la transacción
                 inventariosResultados.push(inventarioOperado);
+
+                await tx.compraTelaItem.create({
+            data: {
+                telaId: telaId,
+                precioKG: inventarioData.precioKG,
+                // Nota: Convertimos pesoGrupo a Int porque tu modelo dice 'cantidad Int'
+                // Si cambias tu modelo a Decimal/Float, quita el Math.round
+                cantidad: Math.round(inventarioData.pesoGrupo), 
+            }
+        });
             }
         }); // Fin de la transacción
 

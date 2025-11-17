@@ -51,6 +51,10 @@ export class CreateProductoDto {
 
   @IsString()
   @IsOptional()
+  tallas?: string;
+
+  @IsString()
+  @IsOptional()
   imagenUrl?: string;
 
   @IsNumber()

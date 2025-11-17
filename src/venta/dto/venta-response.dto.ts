@@ -9,6 +9,7 @@ export class VentaItemResponseDto {
   createdAt: Date;
   updatedAt: Date;
   producto?: any;
+  talla:String;
 
   constructor(item: any) {
     this.id = item.id;
@@ -16,6 +17,7 @@ export class VentaItemResponseDto {
     this.precio = item.precio;
     this.productoId = item.productoId;
     this.ventaId = item.ventaId;
+    this.talla =item.talla;
     this.createdAt = item.createdAt;
     this.updatedAt = item.updatedAt;
     this.producto = item.producto;
@@ -59,5 +61,7 @@ export class VentaResponseDto {
     this.items = venta.items ? venta.items.map((item: any) => new VentaItemResponseDto(item)) : [];
     this.tienda = venta.tienda;
     this.sucursal = venta.sucursal;
+
+    
   }
 }

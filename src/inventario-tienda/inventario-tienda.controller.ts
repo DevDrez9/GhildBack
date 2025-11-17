@@ -35,11 +35,11 @@ export class InventarioTiendaController {
   @Get('bajo-stock')
   getProductosBajoStock(
     @Query('tiendaId') tiendaId?: string,
-    @Query('stockMinimo') stockMinimo?: string
+    
   ) {
     return this.inventarioTiendaService.getProductosBajoStock(
       tiendaId ? +tiendaId : undefined,
-      stockMinimo ? +stockMinimo : undefined
+      
     );
   }
 
@@ -102,15 +102,15 @@ export class InventarioTiendaController {
   transferirStock(
     @Param('origenId') origenId: string,
     @Param('destinoId') destinoId: string,
-    @Query('cantidad') cantidad: string,
+    @Query('cantidad') cantidad: Record<string, number>,
     @Query('motivo') motivo: string,
     @Request() req
   ) {
     const usuarioId = req.user?.userId;
-    return this.inventarioTiendaService.transferirStock(
+    return this.inventarioTiendaService.transferirStockSucursal(
       +origenId,
       +destinoId,
-      +cantidad,
+      cantidad,
       motivo,
       usuarioId
     );
@@ -120,7 +120,7 @@ export class InventarioTiendaController {
   transferirStockSucursal(
     @Param('origenId') origenId: string,
     @Param('destinoId') destinoId: string,
-    @Query('cantidad') cantidad: string,
+    @Query('cantidad') cantidad: Record<string, number>,
     @Query('motivo') motivo: string,
     @Request() req
   ) {
@@ -128,7 +128,7 @@ export class InventarioTiendaController {
     return this.inventarioTiendaService.transferirStockSucursal(
       +origenId,
       +destinoId,
-      +cantidad,
+      cantidad,
       motivo,
       usuarioId
     );}

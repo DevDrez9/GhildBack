@@ -2,8 +2,8 @@ import { IsNumber, IsDateString, IsEnum, IsOptional, IsString } from 'class-vali
 import { CalidadProducto } from 'generated/prisma/client';
 
 export class CompletarTrabajoDto {
-  @IsNumber()
-  cantidadProducida: number;
+  @IsString()
+  cantidadProducida: string;
 
   @IsDateString()
   fechaFinalizacion: string;
@@ -12,8 +12,8 @@ export class CompletarTrabajoDto {
   calidad: CalidadProducto;
 
   @IsString()
-  @IsOptional()
-  notas?: string;
+   @IsOptional()
+  notas: string;
 
   @IsOptional()
   @IsNumber()

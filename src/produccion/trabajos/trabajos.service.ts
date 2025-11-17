@@ -740,120 +740,145 @@ export class TrabajosService {
     return new TrabajoResponseDto(updatedTrabajo);
   }
 
+
   async completarTrabajo(id: number, completarDto: CompletarTrabajoDto): Promise<TrabajoResponseDto> {
-    const trabajo = await this.findOne(id);
+    // 1. Obtener el trabajo
+    const trabajo = await this.prisma.trabajoEnProceso.findUnique({
+        where: { id },
+        include: {
+            parametrosTela: {
+                include: { producto: true }
+            },
+            tienda: true
+        }
+    });
+
+    if (!trabajo) {
+        throw new NotFoundException(`Trabajo en proceso con ID ${id} no encontrado`);
+    }
 
     if (trabajo.estado !== 'EN_PROCESO' && trabajo.estado !== 'PAUSADO') {
         throw new BadRequestException('Solo se pueden completar trabajos en estado EN_PROCESO o PAUSADO');
     }
+    
+    // --- 2. PARSEAR Y VALIDAR EL JSON DESDE 'cantidadProducida' ---
+    let cantidadProducidaPorTalla: Record<string, number>;
+    let totalUnidadesProducidas = 0;
 
-    if (completarDto.cantidadProducida > trabajo.cantidad) {
-        throw new BadRequestException('La cantidad producida no puede ser mayor que la cantidad planificada');
+    try {
+        // completarDto.cantidadProducida viene como string: '{"S": 20, "M": 15}'
+        cantidadProducidaPorTalla = JSON.parse(completarDto.cantidadProducida as unknown as string);
+        
+        // Validación básica: debe ser objeto y sus valores números positivos
+        if (typeof cantidadProducidaPorTalla !== 'object' || cantidadProducidaPorTalla === null) {
+             throw new Error('Formato inválido');
+        }
+
+        // Calcular el total de unidades y validar que sean números
+        for (const key in cantidadProducidaPorTalla) {
+            const val = cantidadProducidaPorTalla[key];
+            if (typeof val !== 'number' || val < 0) {
+                throw new Error('Valores negativos o no numéricos');
+            }
+            totalUnidadesProducidas += val;
+        }
+
+    } catch (error) {
+        throw new BadRequestException(`El campo 'cantidadProducida' debe ser un JSON válido con cantidades numéricas (ej: '{"S": 20}'). Error: ${error.message}`);
     }
 
-    // ⭐ 1. DETERMINAR EL ID DE LA TIENDA DINÁMICAMENTE
+    // Validar contra la cantidad planificada (opcional, pero recomendado)
+    if (totalUnidadesProducidas > trabajo.cantidad) {
+         // Puedes lanzar error o solo advertencia según tu regla de negocio
+         // throw new BadRequestException('La cantidad producida supera a la planificada'); 
+    }
+
     const tiendaId = completarDto.tiendaId || trabajo.tiendaId; 
-
-    // Verificar que la tienda existe (lógica existente)
-    const tienda = await this.prisma.tienda.findUnique({
-        where: { id: tiendaId }
-    });
-
+    
+    // Validar existencia de tienda
+    const tienda = await this.prisma.tienda.findUnique({ where: { id: tiendaId } });
     if (!tienda) {
         throw new NotFoundException(`Tienda con ID ${tiendaId} no encontrada`);
     }
 
-    // Obtener el productoId antes de la transacción
     const productoIdProducido = trabajo.parametrosTela?.producto?.id;
 
     try {
         const result = await this.prisma.$transaction(async (prisma) => {
-            
-            // 2. Actualizar el trabajo (lógica existente)
+            // --- PASO 3: Actualizar el trabajo a "COMPLETADO" ---
             const updatedTrabajo = await prisma.trabajoEnProceso.update({
                 where: { id },
                 data: {
                     estado: 'COMPLETADO',
                     fechaFinReal: new Date()
                 },
-                include: {
-                    parametrosTela: {
-                        include: {
-                            producto: true,
-                            tela: true
-                        }
-                    },
+                include: { 
+                    parametrosTela: { include: { producto: true, tela: true } },
                     costurero: true,
                     tienda: true
                 }
             });
 
-            // 3. Crear el trabajo finalizado (lógica existente)
+            // --- PASO 4: Crear el registro de TrabajoFinalizado ---
             const trabajoFinalizado = await prisma.trabajoFinalizado.create({
                 data: {
                     trabajoEnProceso: { connect: { id } },
                     fechaFinalizacion: new Date(completarDto.fechaFinalizacion),
-                    cantidadProducida: completarDto.cantidadProducida,
+                    
+                    // AQUÍ EL CAMBIO CLAVE: Guardamos el string JSON directamente
+                    cantidadProducida: completarDto.cantidadProducida as unknown as string, 
+                    
                     calidad: completarDto.calidad,
-                    notas: completarDto.notas,
-                     costo:completarDto.costo,
+                    notas: completarDto.notas, // Ahora 'notas' es solo texto opcional
+                    costo: completarDto.costo,
                     tienda: { connect: { id: tiendaId } }
                 }
             });
 
-            // 4. LÓGICA DE ACTUALIZACIÓN DE INVENTARIO (Upsert)
+            // --- PASO 5: LÓGICA DE ACTUALIZACIÓN DE INVENTARIO ---
             if (productoIdProducido) {
-                const cantidadAñadir = completarDto.cantidadProducida;
-                
-                // Intentar encontrar el inventario existente para el producto en la TIENDA DINÁMICA
+                // Buscar inventario existente
                 const inventarioExistente = await prisma.inventarioTienda.findUnique({
-                    where: { 
-                        productoId_tiendaId: {
-                            productoId: productoIdProducido,
-                            tiendaId: tiendaId, // ⭐ USANDO EL ID DE TIENDA DINÁMICO
-                        }
+                    where: { productoId_tiendaId: { productoId: productoIdProducido, tiendaId } }
+                });
+
+                const stockAnterior = (inventarioExistente?.stock as Record<string, number>) || {};
+                const stockNuevo = { ...stockAnterior };
+
+                // Sumar las nuevas cantidades al stock existente
+                for (const talla in cantidadProducidaPorTalla) {
+                    stockNuevo[talla] = (stockNuevo[talla] || 0) + cantidadProducidaPorTalla[talla];
+                }
+
+                // Upsert del inventario
+                const inventarioActualizado = await prisma.inventarioTienda.upsert({
+                    where: { productoId_tiendaId: { productoId: productoIdProducido, tiendaId } },
+                    update: { stock: stockNuevo },
+                    create: {
+                        productoId: productoIdProducido,
+                        tiendaId: tiendaId,
+                        stock: stockNuevo,
+                        stockMinimo: 5,
                     }
                 });
 
-                let stockAnterior: number;
-                let inventarioActualizado: any;
-
-                if (inventarioExistente) {
-                    // El producto YA EXISTE -> Actualizar stock
-                    stockAnterior = inventarioExistente.stock;
-                    inventarioActualizado = await prisma.inventarioTienda.update({
-                        where: { id: inventarioExistente.id },
-                        data: { stock: { increment: cantidadAñadir } }
-                    });
-                } else {
-                    // El producto NO EXISTE -> Crear nuevo registro
-                    stockAnterior = 0;
-                    inventarioActualizado = await prisma.inventarioTienda.create({
-                        data: {
-                            productoId: productoIdProducido,
-                            tiendaId: tiendaId, // ⭐ USANDO EL ID DE TIENDA DINÁMICO
-                            stock: cantidadAñadir,
-                            stockMinimo: 0,
-                        }
-                    });
-                }
-
-                // 5. Registrar Movimiento de Inventario (Entrada por Producción)
+                // --- PASO 6: REGISTRAR MOVIMIENTO ---
                 await prisma.movimientoInventario.create({
                     data: {
                         tipo: 'ENTRADA_PRODUCCION', 
-                        cantidad: cantidadAñadir,
+                        cantidad: cantidadProducidaPorTalla, // Guardamos el objeto JSON
                         productoId: productoIdProducido,
-                        motivo: `Entrada por finalización de Trabajo #${id} en Tienda #${tiendaId}`,
-                        usuarioId: 1,
+                        motivo: `Entrada por finalización de Trabajo #${id}`,
+                        usuarioId: 1, // TODO: Obtener del usuario autenticado
                         inventarioTiendaId: inventarioActualizado.id,
+                        trabajoFinalizadoId: trabajoFinalizado.id,
                         stockAnterior: stockAnterior,
-                        stockNuevo: inventarioActualizado.stock,
+                        stockNuevo: stockNuevo,
                     }
                 });
 
             } else {
-                console.warn(`Trabajo ${id} completado, pero no se encontró producto asociado en parametrosTela. Inventario NO actualizado.`);
+                console.warn(`Trabajo ${id} completado sin producto asociado. Inventario no afectado.`);
             }
 
             return { ...updatedTrabajo, trabajoFinalizado };
@@ -863,12 +888,12 @@ export class TrabajosService {
     } catch (error) {
         if (error instanceof Prisma.PrismaClientKnownRequestError) {
             if (error.code === 'P2002') {
-                throw new ConflictException('Error al completar el trabajo');
+                throw new ConflictException('Error al completar el trabajo: conflicto de datos único.');
             }
         }
         throw error;
     }
-}
+  }
   async remove(id: number): Promise<void> {
     const trabajo = await this.findOne(id);
 
@@ -885,13 +910,15 @@ export class TrabajosService {
     await this.prisma.trabajoEnProceso.delete({
       where: { id }
     });
-  }
-
-  async getEstadisticas(tiendaId?: number): Promise<any> {
+  }async getEstadisticas(tiendaId?: number): Promise<any> {
     const where: Prisma.TrabajoEnProcesoWhereInput = {};
-    
     if (tiendaId) {
       where.tiendaId = tiendaId;
+    }
+
+    const whereFinalizado: Prisma.TrabajoFinalizadoWhereInput = {};
+    if (tiendaId) {
+      whereFinalizado.tiendaId = tiendaId; 
     }
 
     const [
@@ -901,7 +928,7 @@ export class TrabajosService {
       trabajosCompletados,
       trabajosCancelados,
       trabajosEsteMes,
-      totalUnidadesProducidas
+      listaTrabajosFinalizados
     ] = await Promise.all([
       this.prisma.trabajoEnProceso.count({ where }),
       this.prisma.trabajoEnProceso.count({ where: { ...where, estado: 'PENDIENTE' } }),
@@ -916,15 +943,32 @@ export class TrabajosService {
           }
         }
       }),
-      this.prisma.trabajoFinalizado.aggregate({
-        where: tiendaId ? {
-          trabajoEnProceso: {
-            tiendaId: tiendaId
-          }
-        } : {},
-        _sum: { cantidadProducida: true }
+      this.prisma.trabajoFinalizado.findMany({
+        where: whereFinalizado,
+        select: { cantidadProducida: true } 
       })
     ]);
+
+    // --- CÁLCULO EN MEMORIA CORREGIDO ---
+    let totalUnidadesProducidas = 0;
+
+    listaTrabajosFinalizados.forEach(tf => {
+      try {
+        // Parseamos el string
+        const json = JSON.parse(tf.cantidadProducida);
+        
+        if (json && typeof json === 'object') {
+            // ✅ Forzamos a TS a entender que es un objeto iterable y que el resultado es un número
+            const sumaIndividual: number = Object.values(json as Record<string, any>).reduce((acc: number, val: any) => {
+                return acc + (Number(val) || 0);
+            }, 0);
+            
+            totalUnidadesProducidas += sumaIndividual;
+        }
+      } catch (error) {
+        // Ignoramos errores de parseo silenciosamente o con warn
+      }
+    });
 
     return {
       totalTrabajos,
@@ -933,7 +977,69 @@ export class TrabajosService {
       trabajosCompletados,
       trabajosCancelados,
       trabajosEsteMes,
-      totalUnidadesProducidas: totalUnidadesProducidas._sum.cantidadProducida || 0
+      totalUnidadesProducidas
     };
   }
+
+ async getEstadisticasCumplimiento(tiendaId?: number): Promise<any> {
+    const where: Prisma.TrabajoEnProcesoWhereInput = {
+      estado: 'COMPLETADO',
+      fechaFinReal: { not: null },
+      fechaFinEstimada: { not: null }
+    };
+
+    if (tiendaId) {
+      where.tiendaId = tiendaId;
+    }
+
+    const trabajosCompletados = await this.prisma.trabajoEnProceso.findMany({
+      where,
+      select: {
+        fechaFinReal: true,
+        fechaFinEstimada: true
+      }
+    });
+
+    const totalEvaluados = trabajosCompletados.length;
+    let aTiempo = 0;
+    let conRetraso = 0;
+
+    trabajosCompletados.forEach(trabajo => {
+      // 🚨 CORRECCIÓN AQUÍ:
+      // Validamos explícitamente que las fechas existan.
+      // Esto satisface a TypeScript y protege contra errores en tiempo de ejecución.
+      if (!trabajo.fechaFinReal || !trabajo.fechaFinEstimada) {
+        return; // Saltamos esta iteración si falta algún dato (aunque la DB ya lo filtró)
+      }
+
+      // Ahora TypeScript sabe que NO son null
+      const real = new Date(trabajo.fechaFinReal).getTime();
+      const estimada = new Date(trabajo.fechaFinEstimada).getTime();
+
+      if (real <= estimada) {
+        aTiempo++;
+      } else {
+        conRetraso++;
+      }
+    });
+
+    const porcentajeATiempo = totalEvaluados > 0 ? (aTiempo / totalEvaluados) * 100 : 0;
+    const porcentajeRetraso = totalEvaluados > 0 ? (conRetraso / totalEvaluados) * 100 : 0;
+
+    return {
+      totalTrabajosCompletados: totalEvaluados,
+      resumen: {
+        aTiempo: {
+          cantidad: aTiempo,
+          porcentaje: parseFloat(porcentajeATiempo.toFixed(2))
+        },
+        conRetraso: {
+          cantidad: conRetraso,
+          porcentaje: parseFloat(porcentajeRetraso.toFixed(2))
+        }
+      },
+      mensaje: porcentajeATiempo >= 80 
+        ? "¡Excelente eficiencia! La mayoría de los trabajos se entregan a tiempo." 
+        : "Atención: Hay un alto índice de retrasos en la producción."
+    };}
 }

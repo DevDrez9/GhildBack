@@ -13,9 +13,9 @@ export class ParametrosTelaService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(createParametrosTelaDto: CreateParametrosTelaDto): Promise<ParametrosTelaResponseDto> {
-    const { productoId, telaId, ...parametrosData } = createParametrosTelaDto;
+    const { productoId, telaId, consumoTelaPorTalla, ...parametrosData } = createParametrosTelaDto;
 
-    // Verificar que el código de referencia sea único
+    // 1. Verificar unicidad del código
     const existing = await this.prisma.parametrosTela.findUnique({
       where: { codigoReferencia: parametrosData.codigoReferencia }
     });
@@ -24,59 +24,91 @@ export class ParametrosTelaService {
       throw new ConflictException(`Ya existe un parámetro con el código de referencia '${parametrosData.codigoReferencia}'`);
     }
 
-    // Verificar que el producto existe si se proporciona
-    if (productoId) {
-      const producto = await this.prisma.producto.findUnique({
-        where: { id: productoId }
-      });
-
-      if (!producto) {
-        throw new NotFoundException(`Producto con ID ${productoId} no encontrado`);
-      }
+    // 2. Verificar existencia de Tela
+    if (telaId) {
+      const tela = await this.prisma.inventarioTela.findUnique({ where: { id: telaId } });
+      if (!tela) throw new NotFoundException(`Inventario de tela con ID ${telaId} no encontrada`);
     }
 
-    // Verificar que la tela existe si se proporciona
-    if (telaId) {
-      const tela = await this.prisma.inventarioTela.findUnique({
-        where: { id: telaId }
-      });
+    // --------------------------------------------------
+    // 3. CORRECCIÓN: Parsear 'consumoTelaPorTalla' si es un string
+    // --------------------------------------------------
+    let tallasNuevas: string[] = [];
+    let parsedConsumo: any = consumoTelaPorTalla; // 'any' ya que viene del DTO
 
-      if (!tela) {
-        throw new NotFoundException(`Inventario de tela  con ID ${telaId} no encontrada`);
-      }
+    // 🚨 LA CORRECCIÓN 🚨
+    // Verificamos si es un string (ej: '{"S": 1.5, "M": 1.8}')
+    if (parsedConsumo && typeof parsedConsumo === 'string') {
+        try {
+            // Si es string, lo convertimos a objeto
+            parsedConsumo = JSON.parse(parsedConsumo);
+        } catch (e) {
+            console.warn("consumoTelaPorTalla era un string pero no un JSON válido.");
+            parsedConsumo = null;
+        }
+    }
+
+    // Ahora que 'parsedConsumo' es un objeto, extraemos las claves
+    if (parsedConsumo && typeof parsedConsumo === 'object' && !Array.isArray(parsedConsumo)) {
+        tallasNuevas = Object.keys(parsedConsumo); // Esto dará ["S", "M", "L"]
     }
 
     try {
-      const parametros = await this.prisma.parametrosTela.create({
-        data: {
-          ...parametrosData,
-          ...(productoId && { producto: { connect: { id: productoId } } }),
-          ...(telaId && { tela: { connect: { id: telaId } } })
-        },
-        include: {
-          producto: {
-            select: {
-              id: true,
-              nombre: true,
-              sku: true
+      // 4. Iniciar transacción
+      const result = await this.prisma.$transaction(async (prisma) => {
+        
+        // A. Lógica de Producto y Actualización de Tallas
+        if (productoId && tallasNuevas.length > 0) { // Solo si hay tallas nuevas
+            const producto = await prisma.producto.findUnique({ where: { id: productoId } });
+            if (!producto) throw new NotFoundException(`Producto con ID ${productoId} no encontrado`);
+
+            const tallasActuales = producto.tallas ? producto.tallas.split(',').map(t => t.trim()) : [];
+            const tallasCombinadas = Array.from(new Set([...tallasActuales, ...tallasNuevas]));
+            const nuevoStringTallas = tallasCombinadas.join(',');
+
+            if (nuevoStringTallas !== producto.tallas) {
+                await prisma.producto.update({
+                    where: { id: productoId },
+                    data: { tallas: nuevoStringTallas } 
+                });
             }
+        }
+
+        // B. Crear el registro de ParametrosTela
+        const parametros = await prisma.parametrosTela.create({
+          data: {
+            ...parametrosData,
+            // 🚨 CORRECCIÓN: Guardamos el objeto 'parsedConsumo'
+            consumoTelaPorTalla: parsedConsumo || {}, 
+            ...(productoId && { producto: { connect: { id: productoId } } }),
+            ...(telaId && { tela: { connect: { id: telaId } } })
           },
-        tela: {
-            include: {
-                // ⭐ ESTO ES OBLIGATORIO ⭐
-                tela: {
-                    select: {
-                        id: true, 
-                        nombreComercial: true, 
-                        // ... otros campos
+          include: {
+            producto: {
+              select: {
+                id: true,
+                nombre: true,
+                tallas: true 
+              }
+            },
+            tela: { 
+                include: {
+                    tela: { 
+                        select: {
+                            id: true, 
+                            nombreComercial: true, 
+                        }
                     }
                 }
-            }
-        },
-        }
+            },
+          }
+        });
+
+        return parametros;
       });
 
-      return new ParametrosTelaResponseDto(parametros);
+      return new ParametrosTelaResponseDto(result);
+
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         if (error.code === 'P2002') {
@@ -233,78 +265,134 @@ export class ParametrosTelaService {
     return new ParametrosTelaResponseDto(parametros);
   }
 
-  async update(id: number, updateParametrosTelaDto: UpdateParametrosTelaDto): Promise<ParametrosTelaResponseDto> {
-    const parametros = await this.findOne(id);
-    const { productoId, ...parametrosData } = updateParametrosTelaDto;
+ async update(id: number, updateParametrosTelaDto: UpdateParametrosTelaDto): Promise<ParametrosTelaResponseDto> {
+    // 1. Obtenemos el estado anterior
+    const parametros = await this.prisma.parametrosTela.findUnique({ 
+        where: { id },
+        include: { producto: { select: { tallas: true } } } 
+    });
+
+    if (!parametros) {
+        throw new NotFoundException(`Parámetro con ID ${id} no encontrado`);
+    }
+    
+    // 2. Desestructuramos el DTO
+    const { productoId, telaId, consumoTelaPorTalla, ...parametrosData } = updateParametrosTelaDto;
+
+    // 3. Verificación de unicidad del código
+    if (parametrosData.codigoReferencia && parametrosData.codigoReferencia !== parametros.codigoReferencia) {
+      const existing = await this.prisma.parametrosTela.findUnique({
+        where: { codigoReferencia: parametrosData.codigoReferencia }
+      });
+      if (existing) {
+        throw new ConflictException(`Ya existe un parámetro con el código '${parametrosData.codigoReferencia}'`);
+      }
+    }
 
     try {
-      const data: Prisma.ParametrosTelaUpdateInput = { ...parametrosData };
+      // 4. Iniciamos la transacción
+      const updatedParametros = await this.prisma.$transaction(async (prisma) => {
+        
+        // 5. Preparamos los datos base
+        const data: Prisma.ParametrosTelaUpdateInput = { 
+            ...parametrosData,
+            // Si 'consumoTelaPorTalla' viene en el DTO, lo incluimos para actualizar
+            ...(consumoTelaPorTalla && { consumoTelaPorTalla: consumoTelaPorTalla as Prisma.InputJsonValue }) 
+        };
 
-      // Verificar unicidad del código de referencia si se está cambiando
-      if (parametrosData.codigoReferencia && parametrosData.codigoReferencia !== parametros.codigoReferencia) {
-        const existing = await this.prisma.parametrosTela.findUnique({
-          where: { codigoReferencia: parametrosData.codigoReferencia }
+        // 6. Lógica de Tela
+        if (telaId !== undefined) {
+          if (telaId === null) {
+            data.tela = { disconnect: true };
+          } else if (telaId !== parametros.telaId) {
+            const tela = await prisma.inventarioTela.findUnique({ where: { id: telaId } });
+            if (!tela) throw new NotFoundException(`Inventario de tela con ID ${telaId} no encontrada`);
+            data.tela = { connect: { id: telaId } };
+          }
+        }
+
+        // 7. Lógica de Producto
+        let finalProductoId: number | null = parametros.productoId; 
+
+        if (productoId !== undefined) {
+          if (productoId === null) {
+            data.producto = { disconnect: true };
+            finalProductoId = null;
+          } else if (productoId !== parametros.productoId) {
+            const producto = await prisma.producto.findUnique({ where: { id: productoId } });
+            if (!producto) throw new NotFoundException(`Producto con ID ${productoId} no encontrado`);
+            data.producto = { connect: { id: productoId } };
+            finalProductoId = productoId;
+          }
+        }
+
+        // --------------------------------------------------
+        // 8. LÓGICA CORREGIDA PARA ACTUALIZAR 'tallas'
+        // --------------------------------------------------
+        if (consumoTelaPorTalla && finalProductoId) {
+          
+          let tallasNuevas: string[] = [];
+          let parsedConsumo: any = consumoTelaPorTalla;
+
+          // 🚨 LA CORRECCIÓN 🚨
+          // Verificamos si es un string (porque el DTO lo pasa como 'any' o 'string')
+          if (typeof parsedConsumo === 'string') {
+            try {
+              // Si es string, lo convertimos a objeto
+              parsedConsumo = JSON.parse(parsedConsumo);
+            } catch (e) {
+              // Si falla el parseo (es un string inválido), lo dejamos como null
+              console.warn("El campo consumoTelaPorTalla no era un JSON válido.");
+              parsedConsumo = null;
+            }
+          }
+
+          // Si (después de parsear) es un objeto válido, extraemos sus claves
+          if (parsedConsumo && typeof parsedConsumo === 'object' && !Array.isArray(parsedConsumo)) {
+            tallasNuevas = Object.keys(parsedConsumo); // Esto dará ["XL"]
+          }
+
+          if (tallasNuevas.length > 0) {
+            const producto = await prisma.producto.findUnique({ where: { id: finalProductoId } });
+            
+            if (producto) {
+              const tallasActuales = producto.tallas ? producto.tallas.split(',').map(t => t.trim()) : [];
+              const tallasCombinadas = Array.from(new Set([...tallasActuales, ...tallasNuevas]));
+              const nuevoStringTallas = tallasCombinadas.join(',');
+
+              if (nuevoStringTallas !== producto.tallas) {
+                await prisma.producto.update({
+                  where: { id: finalProductoId },
+                  data: { tallas: nuevoStringTallas }
+                });
+              }
+            }
+          }
+        }
+
+        // 9. Actualizar ParametrosTela
+        return prisma.parametrosTela.update({
+          where: { id },
+          data,
+          include: {
+            producto: {
+              select: {
+                id: true,
+                nombre: true,
+                tallas: true 
+              }
+            },
+            tela:{
+              include: {
+                tela:true
+              }
+            }
+          }
         });
-
-        if (existing) {
-          throw new ConflictException(`Ya existe un parámetro con el código de referencia '${parametrosData.codigoReferencia}'`);
-        }
-      }
-
-      // Manejar actualización del producto
-      if (productoId !== undefined) {
-        if (productoId === null) {
-          data.producto = { disconnect: true };
-        } else if (productoId !== parametros.productoId) {
-          const producto = await this.prisma.producto.findUnique({
-            where: { id: productoId }
-          });
-
-          if (!producto) {
-            throw new NotFoundException(`Producto con ID ${productoId} no encontrado`);
-          }
-
-          data.producto = { connect: { id: productoId } };
-        }
-      }
-
-      // Manejar actualización de la tela
-     /* if (telaId !== undefined) {
-        if (telaId === null) {
-          data.tela = { disconnect: true };
-        } else if (telaId !== parametros.tela?.telaId) {
-          const tela = await this.prisma.tela.findUnique({
-            where: { id: telaId }
-          });
-
-          if (!tela) {
-            throw new NotFoundException(`Tela con ID ${telaId} no encontrada`);
-          }
-
-          data.tela = { connect: { id: telaId } };
-        }
-      }*/
-
-      const updatedParametros = await this.prisma.parametrosTela.update({
-        where: { id },
-        data,
-        include: {
-          producto: {
-            select: {
-              id: true,
-              nombre: true,
-              sku: true
-            }
-          },
-          tela:{
-            include: {
-              tela:true
-            }
-          }
-        }
-      });
+      }); // Fin de la transacción
 
       return new ParametrosTelaResponseDto(updatedParametros);
+
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         if (error.code === 'P2002') {
@@ -394,30 +482,58 @@ export class ParametrosTelaService {
       }
     };
   }
-
-  async getEstadisticas(id: number): Promise<any> {
+async getEstadisticas(id: number): Promise<any> {
     const parametros = await this.findOne(id);
 
+    // 1. Consultas en paralelo
+    // Traemos la lista de trabajos finalizados para sumar el JSON en memoria
     const [
       totalTrabajos,
       trabajosPendientes,
       trabajosEnProceso,
       trabajosCompletados,
-      totalUnidadesProducidas
+      trabajosFinalizadosLista // <-- CAMBIO: Traemos la lista, no el agregado
     ] = await Promise.all([
       this.prisma.trabajoEnProceso.count({ where: { parametrosTelaId: id } }),
       this.prisma.trabajoEnProceso.count({ where: { parametrosTelaId: id, estado: 'PENDIENTE' } }),
       this.prisma.trabajoEnProceso.count({ where: { parametrosTelaId: id, estado: 'EN_PROCESO' } }),
       this.prisma.trabajoEnProceso.count({ where: { parametrosTelaId: id, estado: 'COMPLETADO' } }),
-      this.prisma.trabajoFinalizado.aggregate({
+      this.prisma.trabajoFinalizado.findMany({
         where: {
           trabajoEnProceso: {
             parametrosTelaId: id
           }
         },
-        _sum: { cantidadProducida: true }
+        select: { cantidadProducida: true } // Solo traemos el campo necesario
       })
     ]);
+
+    // 2. Calcular Total de Unidades Producidas (Sumando los JSONs)
+    let totalUnidadesProducidas = 0;
+
+    trabajosFinalizadosLista.forEach(tf => {
+      try {
+        const json = JSON.parse(tf.cantidadProducida);
+        if (json && typeof json === 'object') {
+            // Sumar valores del objeto {"S": 10, "M": 5} -> 15
+            const sumaRegistro = Object.values(json as Record<string, any>).reduce((acc: number, val: any) => {
+                return acc + (Number(val) || 0);
+            }, 0);
+            totalUnidadesProducidas += sumaRegistro;
+        }
+      } catch (e) {
+        // Fallback si no es JSON válido
+        totalUnidadesProducidas += Number(tf.cantidadProducida) || 0;
+      }
+    });
+
+    // 3. Calcular Consumo Total de Tela
+    // Fórmula: (Consumo por Lote * Total Unidades Producidas) / Cantidad Estándar por Lote
+    // Validamos división por cero para evitar NaN o Infinity
+    let consumoTotalTela = 0;
+    if (parametros.cantidadEstandarPorLote > 0) {
+        consumoTotalTela = (parametros.consumoTelaPorLote * totalUnidadesProducidas) / parametros.cantidadEstandarPorLote;
+    }
 
     return {
       parametros: new ParametrosTelaResponseDto(parametros),
@@ -426,8 +542,8 @@ export class ParametrosTelaService {
         trabajosPendientes,
         trabajosEnProceso,
         trabajosCompletados,
-        totalUnidadesProducidas: totalUnidadesProducidas._sum.cantidadProducida || 0,
-        consumoTotalTela: parseFloat((parametros.consumoTelaPorLote * (totalUnidadesProducidas._sum.cantidadProducida || 0) / parametros.cantidadEstandarPorLote).toFixed(2))
+        totalUnidadesProducidas, // Valor calculado en memoria
+        consumoTotalTela: parseFloat(consumoTotalTela.toFixed(2))
       }
     };
   }

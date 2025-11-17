@@ -47,6 +47,10 @@ export class CarritoController {
     async checkout(@Param('id') id: string): Promise<CarritoResponseDto> {
         return this.carritoService.checkout(+id);
     }
+    @Patch(':id/checkout-pagado')
+    async checkoutPagado(@Param('id') id: string): Promise<CarritoResponseDto> {
+        return this.carritoService.checkoutPagado(+id);
+    }
 
     // ----------------------------------------------------------------
     // 4. TERMINAR COMPRA (Cambia estado a 'terminado')

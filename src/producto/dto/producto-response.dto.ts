@@ -28,6 +28,7 @@ export class ProductoResponseDto {
   stock: number;
   stockMinimo: number;
   sku?: string;
+  tallas?:string;
   imagenUrl?: string;
   categoriaId: number;
   subcategoriaId?: number;
@@ -49,6 +50,7 @@ export class ProductoResponseDto {
     this.stock = producto.stock;
     this.stockMinimo = producto.stockMinimo;
     this.sku = producto.sku;
+    this.tallas = producto.tallas;
     this.imagenUrl = producto.imagenUrl;
     this.categoriaId = producto.categoriaId;
     this.subcategoriaId = producto.subcategoriaId;

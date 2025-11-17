@@ -10,6 +10,9 @@ export class CreateConfigWebDto {
   @IsString()
   @IsOptional()
   logoUrl?: string;
+   @IsString()
+  @IsOptional()
+  imagenQr?: string;
 
   @IsString()
   colorPrimario!: string;

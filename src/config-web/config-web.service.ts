@@ -78,24 +78,33 @@ export class ConfigWebService {
   // ------------------------------------------------------------------------
 
   // --- MÉTODO CREATE (Ajustado para logoUrl) ---
-  async create(createConfigWebDto: CreateConfigWebDto) {
-    const { banners = [], logoUrl, ...configData } = createConfigWebDto;
+ async create(createConfigWebDto: CreateConfigWebDto) {
+    // 1. Desestructuramos también imagenQr
+    const { banners = [], logoUrl, imagenQr, ...configData } = createConfigWebDto;
 
     let bannerDataForPrisma: any[] = [];
     if (banners.length > 0) {
       bannerDataForPrisma = await this.processBanners(banners);
     }
     
+    // Procesamiento de LOGO
     let processedLogoUrl = logoUrl;
-    // **COMPROBACIÓN CLAVE:** Si logoUrl existe y es Base64
     if (logoUrl && logoUrl.startsWith('data:')) {
       processedLogoUrl = await this.saveBase64Image(logoUrl, 'logos'); 
+    }
+
+    // Procesamiento de IMAGEN QR (NUEVO)
+    let processedImagenQr = imagenQr;
+    if (imagenQr && imagenQr.startsWith('data:')) {
+      // Guardamos en una carpeta 'qrs' para mantener el orden
+      processedImagenQr = await this.saveBase64Image(imagenQr, 'qrs'); 
     }
 
     return this.prisma.configWeb.create({
       data: {
         ...configData,
-        logoUrl: processedLogoUrl, 
+        logoUrl: processedLogoUrl,
+        imagenQr: processedImagenQr, // Agregamos el campo procesado
         banners: bannerDataForPrisma.length > 0 ? {
           create: bannerDataForPrisma
         } : undefined
@@ -109,27 +118,37 @@ export class ConfigWebService {
   // ... (findAll, findOne, remove - No necesitan cambios)
 
   // --- MÉTODO UPDATE (Ajustado para logoUrl) ---
-   async update(id: number, updateConfigWebDto: UpdateConfigWebDto) {
+ async update(id: number, updateConfigWebDto: UpdateConfigWebDto) {
     await this.findOne(id); 
 
-    const { banners = [], logoUrl, ...configData } = updateConfigWebDto;
+    // 1. Desestructuramos también imagenQr
+    const { banners = [], logoUrl, imagenQr, ...configData } = updateConfigWebDto;
 
     let bannerDataForPrisma: any[] = [];
     if (banners.length > 0) {
         bannerDataForPrisma = await this.processBanners(banners);
     }
     
+    // Procesamiento de LOGO
     let processedLogoUrl = logoUrl;
-    // **COMPROBACIÓN CLAVE:** Si logoUrl existe y es Base64
     if (logoUrl && logoUrl.startsWith('data:')) {
       processedLogoUrl = await this.saveBase64Image(logoUrl, 'logos');
     }
 
-    // Usamos el operador spread condicional para incluir o no el campo 'logoUrl'
+    // Procesamiento de IMAGEN QR (NUEVO)
+    let processedImagenQr = imagenQr;
+    if (imagenQr && imagenQr.startsWith('data:')) {
+      processedImagenQr = await this.saveBase64Image(imagenQr, 'qrs');
+    }
+
+    // Construimos el objeto de actualización
     const dataToUpdate: any = {
         ...configData,
-        // Solo actualiza logoUrl si se envió en el DTO (ya sea Base64 o una URL existente)
+        // Actualiza logoUrl solo si viene en el DTO
         ...(logoUrl !== undefined && { logoUrl: processedLogoUrl }),
+        
+        // Actualiza imagenQr solo si viene en el DTO (NUEVO)
+        ...(imagenQr !== undefined && { imagenQr: processedImagenQr }),
         
         ...(banners.length > 0 && {
           banners: {
@@ -147,7 +166,6 @@ export class ConfigWebService {
       }
     });
   }
-
   // --- Banner methods (addBanner, updateBanner, removeBanner, getBanners - Ya ajustados) ---
 
   async addBanner(configWebId: number, createBannerDto: CreateBannerDto) {

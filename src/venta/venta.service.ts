@@ -10,79 +10,55 @@ import { EstadoVenta, Prisma } from 'generated/prisma/client';
 import { VentaAgregadaResponseDto } from './dto/venta-agregada-response';
 import { Decimal } from 'generated/prisma/runtime/library';
 
+const agruparItemsPorProducto = (items: CreateVentaItemDto[]): Map<number, Record<string, number>> => {
+    const mapa = new Map<number, Record<string, number>>();
+    for (const item of items) {
+        if (!mapa.has(item.productoId)) {
+            mapa.set(item.productoId, {});
+        }
+        const tallas = mapa.get(item.productoId)!;
+        tallas[item.talla] = (tallas[item.talla] || 0) + item.cantidad;
+    }
+    return mapa;
+};
+
 @Injectable()
 export class VentaService {
   constructor(private readonly prisma: PrismaService) {}
 
-  private async generarNumeroVenta(tiendaId: number): Promise<string> {
-    const tienda = await this.prisma.tienda.findUnique({
-      where: { id: tiendaId }
-    });
-
-    if (!tienda) {
-      throw new NotFoundException(`Tienda con ID ${tiendaId} no encontrada`);
-    }
-
+ private async generarNumeroVenta(tiendaId: number): Promise<string> {
+    const tienda = await this.prisma.tienda.findUnique({ where: { id: tiendaId } });
+    if (!tienda) throw new NotFoundException(`Tienda con ID ${tiendaId} no encontrada`);
     const year = new Date().getFullYear();
     const month = (new Date().getMonth() + 1).toString().padStart(2, '0');
-    
-    // Contar ventas de este año
     const count = await this.prisma.venta.count({
-      where: {
-        tiendaId,
-        createdAt: {
-          gte: new Date(`${year}-01-01`),
-          lt: new Date(`${year + 1}-01-01`)
-        }
-      }
+      where: { tiendaId, createdAt: { gte: new Date(`${year}-01-01`), lt: new Date(`${year + 1}-01-01`) } },
     });
-
     const numero = (count + 1).toString().padStart(4, '0');
     return `V-${tienda.dominio}-${year}${month}-${numero}`;
   }
 
-  private async validarStockProductos(items: CreateVentaItemDto[], sucursalId?: number): Promise<void> {
-    for (const item of items) {
-      let stockDisponible = 0;
+ private async validarStockPorTalla(itemsAgrupados: Map<number, Record<string, number>>, tiendaId: number, sucursalId?: number): Promise<void> {
+    for (const [productoId, tallas] of itemsAgrupados.entries()) {
+        const inventario = sucursalId
+            ? await this.prisma.inventarioSucursal.findUnique({ where: { productoId_sucursalId: { productoId, sucursalId } } })
+            : await this.prisma.inventarioTienda.findUnique({ where: { productoId_tiendaId: { productoId, tiendaId } } });
 
-      if (sucursalId) {
-        // Verificar stock en sucursal
-        const inventario = await this.prisma.inventarioSucursal.findUnique({
-          where: {
-            productoId_sucursalId: {
-              productoId: item.productoId,
-              sucursalId: sucursalId
-            }
-          }
-        });
-
-        stockDisponible = inventario?.stock || 0;
-      } else {
-        // Verificar stock en tienda principal
-        const producto = await this.prisma.producto.findUnique({
-          where: { id: item.productoId }
-        });
-
-        if (!producto) {
-          throw new NotFoundException(`Producto con ID ${item.productoId} no encontrado`);
+        if (!inventario) {
+            throw new BadRequestException(`No hay inventario registrado para el producto con ID ${productoId} en esta ubicación.`);
         }
 
-        stockDisponible = producto.stock;
-      }
+        const stockDisponible = (inventario.stock as Record<string, number>) || {};
 
-      if (stockDisponible < item.cantidad) {
-        const producto = await this.prisma.producto.findUnique({
-          where: { id: item.productoId }
-        });
-
-        throw new BadRequestException(
-          `Stock insuficiente para el producto "${producto?.nombre}". ` +
-          `Solicitado: ${item.cantidad}, Disponible: ${stockDisponible}`
-        );
-      }
+        for (const talla in tallas) {
+            const cantidadRequerida = tallas[talla];
+            const stockActualTalla = stockDisponible[talla] || 0;
+            if (stockActualTalla < cantidadRequerida) {
+                throw new BadRequestException(`Stock insuficiente para el producto ID ${productoId}, talla ${talla}. Disponible: ${stockActualTalla}, Solicitado: ${cantidadRequerida}`);
+            }
+        }
     }
   }
-
   private async actualizarStockProductos(items: CreateVentaItemDto[], sucursalId?: number): Promise<void> {
     for (const item of items) {
       if (sucursalId) {
@@ -123,82 +99,93 @@ export class VentaService {
     }
   }
 
-  async create(createVentaDto: CreateVentaDto): Promise<VentaResponseDto> {
+ async create(createVentaDto: CreateVentaDto): Promise<VentaResponseDto> {
     const { items, sucursalId, tiendaId, ...ventaData } = createVentaDto;
 
-    // Verificar que la tienda existe
-    const tienda = await this.prisma.tienda.findUnique({
-      where: { id: tiendaId }
-    });
-
-    if (!tienda) {
-      throw new NotFoundException(`Tienda con ID ${tiendaId} no encontrada`);
+    if (!items || items.length === 0) {
+        throw new BadRequestException('Una venta debe tener al menos un item.');
     }
 
-    // Verificar que la sucursal existe si se proporciona
-    if (sucursalId) {
-      const sucursal = await this.prisma.sucursal.findUnique({
-        where: { id: sucursalId }
-      });
+    const itemsAgrupados = agruparItemsPorProducto(items);
 
-      if (!sucursal) {
-        throw new NotFoundException(`Sucursal con ID ${sucursalId} no encontrada`);
-      }
-    }
-
-    // Validar stock de productos
-    await this.validarStockProductos(items, sucursalId);
-
-    // Generar número de venta único
+    // 1. Validar stock ANTES de iniciar la transacción
+    await this.validarStockPorTalla(itemsAgrupados, tiendaId, sucursalId);
+    
     const numeroVenta = await this.generarNumeroVenta(tiendaId);
 
     try {
-      return await this.prisma.$transaction(async (prisma) => {
-        // Crear la venta
-        const venta = await prisma.venta.create({
-          data: {
-            ...ventaData,
-            numeroVenta,
-            tiendaId,
-            sucursalId,
-            items: {
-              create: items.map(item => ({
-                cantidad: item.cantidad,
-                precio: item.precio,
-                productoId: item.productoId
-              }))
-            }
-          },
-          include: {
-            tienda: true,
-            sucursal: true,
-            items: {
-              include: {
-                producto: {
-                  include: {
-                    imagenes: {
-                      take: 1,
-                      orderBy: { orden: 'asc' }
-                    }
-                  }
+        const ventaCreada = await this.prisma.$transaction(async (prisma) => {
+            // 2. Crear la venta y sus items
+            const venta = await prisma.venta.create({
+                data: {
+                    ...ventaData,
+                    numeroVenta,
+                    tiendaId,
+                    sucursalId,
+                    items: {
+                        create: items.map(item => ({
+                            cantidad: item.cantidad,
+                            precio: item.precio,
+                            productoId: item.productoId,
+                            talla: item.talla, // Se guarda la talla en el item de venta
+                        })),
+                    },
+                },
+                include: { items: true },
+            });
+
+            // 3. Actualizar inventario y registrar movimientos
+            for (const [productoId, tallasVendidas] of itemsAgrupados.entries()) {
+                const inventario = sucursalId
+                    ? await prisma.inventarioSucursal.findUnique({ where: { productoId_sucursalId: { productoId, sucursalId } } })
+                    : await prisma.inventarioTienda.findUnique({ where: { productoId_tiendaId: { productoId, tiendaId } } });
+                
+                // Esta validación es redundante si `validarStockPorTalla` se ejecutó, pero es una capa extra de seguridad.
+                if (!inventario) throw new Error(`Inventario no encontrado para producto ${productoId} durante la transacción.`);
+
+                const stockAnterior = (inventario.stock as Record<string, number>) || {};
+                const stockNuevo = { ...stockAnterior };
+
+                for (const talla in tallasVendidas) {
+                    stockNuevo[talla] = (stockNuevo[talla] || 0) - tallasVendidas[talla];
+                    if (stockNuevo[talla] === 0) delete stockNuevo[talla];
                 }
-              }
+                
+                // Actualizar el registro de inventario
+                if (sucursalId) {
+                    await prisma.inventarioSucursal.update({ where: { id: inventario.id }, data: { stock: stockNuevo } });
+                } else {
+                    await prisma.inventarioTienda.update({ where: { id: inventario.id }, data: { stock: stockNuevo } });
+                }
+                
+                // Registrar el movimiento de inventario
+                await prisma.movimientoInventario.create({
+                    data: {
+                        tipo: 'SALIDA_VENTA',
+                        cantidad: tallasVendidas, // Guardamos el objeto de tallas vendidas
+                        productoId,
+                        motivo: `Venta #${venta.numeroVenta}`,
+                        ventaId: venta.id,
+                        inventarioSucursalId: sucursalId ? inventario.id : undefined,
+                        inventarioTiendaId: sucursalId ? undefined : inventario.id,
+                        stockAnterior: stockAnterior || {},
+                        stockNuevo: stockNuevo || {},
+                    }
+                });
             }
-          }
+
+            return venta;
         });
 
-        // Actualizar stock de productos
-        await this.actualizarStockProductos(items, sucursalId);
+        // Devolvemos el resultado completo después de la transacción
+        const ventaCompleta = await this.findOne(ventaCreada.id);
+        return ventaCompleta;
 
-        return new VentaResponseDto(venta);
-      });
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError) {
-        if (error.code === 'P2002') {
-          throw new ConflictException('Error al crear la venta');
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+            throw new ConflictException('Error al crear la venta, el número de venta ya existe.');
         }
-      }
-      throw error;
+        throw error;
     }
   }
 
@@ -249,6 +236,7 @@ export class VentaService {
                 sucursal: true,
                 items: {
                     include: {
+                      
                         producto: {
                             include: {
                                 imagenes: {
@@ -278,26 +266,15 @@ export class VentaService {
     const venta = await this.prisma.venta.findUnique({
       where: { id },
       include: {
-        tienda: {
-          include: {
-            configWeb: true
-          }
-        },
+        tienda: true,
         sucursal: true,
         items: {
           include: {
             producto: {
               include: {
-                categoria: true,
-                subcategoria: true,
-                imagenes: true
+                imagenes: { take: 1, orderBy: { orden: 'asc' } }
               }
             }
-          }
-        },
-        movimientoInventario: {
-          include: {
-            producto: true
           }
         }
       }
@@ -363,6 +340,7 @@ export class VentaService {
       data.items = {
         create: items.map(item => ({
           cantidad: item.cantidad,
+          talla:item.talla,
           precio: item.precio,
           producto: { connect: { id: item.productoId } }
         }))
@@ -637,5 +615,124 @@ async getVentasPorTienda(
     // Reutilizamos el método findAll, que ya maneja paginación y otros filtros.
     return this.findAll(filterVentaDto);
 }
+
+
+/**
+   * Obtiene estadísticas comparativas de ventas Web (Carritos terminados) vs Ventas Local.
+   * @param year Año a consultar (ej: 2023)
+   * @param tiendaId ID de la tienda (opcional)
+   */
+  async getEstadisticasCanalVenta(year: number, tiendaId?: number): Promise<any> {
+    // 1. Definir rango de fechas (Inicio y Fin del año)
+    const startOfYear = new Date(year, 0, 1);       // 1 de Enero 00:00:00
+    const endOfYear = new Date(year, 11, 31, 23, 59, 59); // 31 de Diciembre 23:59:59
+
+    // Filtros base
+    const whereVenta: Prisma.VentaWhereInput = {
+      estado: 'CONFIRMADA', // Solo ventas reales confirmadas
+      createdAt: { gte: startOfYear, lte: endOfYear }
+    };
+    
+    const whereCarrito: Prisma.CarritoWhereInput = {
+      estado: 'terminado', // Indica que la compra web finalizó
+      updatedAt: { gte: startOfYear, lte: endOfYear } // Usamos updatedAt como fecha de cierre
+    };
+
+    if (tiendaId) {
+      whereVenta.tiendaId = tiendaId;
+      whereCarrito.tiendaId = tiendaId;
+    }
+
+    // 2. Ejecutar consultas en paralelo (Solo traemos fecha y monto para ser eficientes)
+    const [todasLasVentas, ventasWebCarritos] = await Promise.all([
+      // Total de Ventas (Web + Local)
+      this.prisma.venta.findMany({
+        where: whereVenta,
+        select: { createdAt: true, total: true }
+      }),
+      // Ventas que provienen de la Web (Carritos terminados)
+      this.prisma.carrito.findMany({
+        where: whereCarrito,
+        select: { updatedAt: true, precio: true }
+      })
+    ]);
+
+    // 3. Inicializar estructura de datos mensual (Array de 12 meses)
+    // Estructura: { mes, total: {cant, monto}, web: {cant, monto}, local: {cant, monto} }
+    const datosMensuales = Array.from({ length: 12 }, (_, i) => ({
+      mes: i + 1,
+      nombreMes: new Date(0, i).toLocaleString('es', { month: 'long' }), // Enero, Febrero...
+      total: { cantidad: 0, monto: 0 },
+      web: { cantidad: 0, monto: 0 },
+      local: { cantidad: 0, monto: 0 }
+    }));
+
+    // 4. Procesar TOTAL de Ventas (Llenar datos globales)
+    todasLasVentas.forEach(venta => {
+      const mesIndex = venta.createdAt.getMonth(); // 0 = Enero
+      const monto = Number(venta.total) || 0;
+      
+      datosMensuales[mesIndex].total.cantidad += 1;
+      datosMensuales[mesIndex].total.monto += monto;
+    });
+
+    // 5. Procesar Ventas WEB (Llenar datos de carritos)
+    ventasWebCarritos.forEach(carrito => {
+      const mesIndex = carrito.updatedAt.getMonth();
+      const monto = Number(carrito.precio) || 0;
+
+      datosMensuales[mesIndex].web.cantidad += 1;
+      datosMensuales[mesIndex].web.monto += monto;
+    });
+
+    // 6. Calcular Ventas LOCAL (Diferencia) y Totales Anuales
+    const resumenAnual = {
+      total: { cantidad: 0, monto: 0 },
+      web: { cantidad: 0, monto: 0, porcentajeCantidad: 0, porcentajeMonto: 0 },
+      local: { cantidad: 0, monto: 0, porcentajeCantidad: 0, porcentajeMonto: 0 }
+    };
+
+    const estadisticaMensual = datosMensuales.map(dato => {
+      // Calculamos Local = Total - Web
+      // Usamos Math.max(0, ...) para evitar negativos si hubiera inconsistencia de datos de prueba
+      const cantidadLocal = Math.max(0, dato.total.cantidad - dato.web.cantidad);
+      const montoLocal = Math.max(0, dato.total.monto - dato.web.monto);
+
+      // Actualizamos el mes con el cálculo local
+      dato.local.cantidad = cantidadLocal;
+      dato.local.monto = montoLocal;
+
+      // Sumar al acumulado anual
+      resumenAnual.total.cantidad += dato.total.cantidad;
+      resumenAnual.total.monto += dato.total.monto;
+      resumenAnual.web.cantidad += dato.web.cantidad;
+      resumenAnual.web.monto += dato.web.monto;
+      resumenAnual.local.cantidad += cantidadLocal;
+      resumenAnual.local.monto += montoLocal;
+
+      return {
+        ...dato,
+        // Agregamos porcentajes mensuales para gráficos
+        porcentajeWeb: dato.total.cantidad > 0 ? (dato.web.cantidad / dato.total.cantidad) * 100 : 0,
+        porcentajeLocal: dato.total.cantidad > 0 ? (cantidadLocal / dato.total.cantidad) * 100 : 0
+      };
+    });
+
+    // 7. Calcular porcentajes anuales finales
+    if (resumenAnual.total.cantidad > 0) {
+      resumenAnual.web.porcentajeCantidad = (resumenAnual.web.cantidad / resumenAnual.total.cantidad) * 100;
+      resumenAnual.local.porcentajeCantidad = (resumenAnual.local.cantidad / resumenAnual.total.cantidad) * 100;
+    }
+    if (resumenAnual.total.monto > 0) {
+      resumenAnual.web.porcentajeMonto = (resumenAnual.web.monto / resumenAnual.total.monto) * 100;
+      resumenAnual.local.porcentajeMonto = (resumenAnual.local.monto / resumenAnual.total.monto) * 100;
+    }
+
+    return {
+      anio: year,
+      resumenAnual,
+      desgloseMensual: estadisticaMensual
+    };
+  }
 
 }

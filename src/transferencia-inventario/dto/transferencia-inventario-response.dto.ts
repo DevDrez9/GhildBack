@@ -4,12 +4,15 @@ export class TransferenciaInventarioResponseDto {
   id: number;
   codigo: string;
   estado: EstadoTransferencia;
-  motivo?: string;
+  
+  /** ✅ MODIFICADO: La cantidad es ahora un objeto. */
+  cantidad: Record<string, number>;
+  
+  motivo?: string | null;
   origenTipo: TipoOrigenTransferencia;
   origenId: number;
   destinoTipo: TipoDestinoTransferencia;
   destinoId: number;
-  cantidad: number;
   productoId: number;
   usuarioId: number;
   createdAt: Date;
@@ -29,7 +32,12 @@ export class TransferenciaInventarioResponseDto {
     this.origenId = transferencia.origenId;
     this.destinoTipo = transferencia.destinoTipo;
     this.destinoId = transferencia.destinoId;
-    this.cantidad = transferencia.cantidad;
+    
+    // Lógica para manejar el objeto de cantidad
+    this.cantidad = (typeof transferencia.cantidad === 'object' && transferencia.cantidad !== null && !Array.isArray(transferencia.cantidad))
+      ? transferencia.cantidad
+      : {};
+      
     this.productoId = transferencia.productoId;
     this.usuarioId = transferencia.usuarioId;
     this.createdAt = transferencia.createdAt;

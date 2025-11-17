@@ -31,6 +31,11 @@ export class TransferenciaInventarioController {
     return this.transferenciaInventarioService.findAll(filterTransferenciaInventarioDto);
   }
 
+   @Get(':id')
+  findOne(@Param('id') id: string) {
+    return this.transferenciaInventarioService.findOne(+id);
+  }
+
   @Get('estadisticas')
   getEstadisticas(@Query('tiendaId') tiendaId?: string) {
     return this.transferenciaInventarioService.getEstadisticas(tiendaId ? +tiendaId : undefined);
@@ -46,24 +51,24 @@ export class TransferenciaInventarioController {
     return this.transferenciaInventarioService.findByCodigo(codigo);
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.transferenciaInventarioService.findOne(+id);
-  }
+ 
 
   @Patch(':id')
   update(@Param('id') id: string, @Body() updateTransferenciaInventarioDto: UpdateTransferenciaInventarioDto) {
     return this.transferenciaInventarioService.update(+id, updateTransferenciaInventarioDto);
   }
 
-  @Patch(':id/estado')
-  updateEstado(@Param('id') id: string, @Body() updateEstadoTransferenciaDto: UpdateEstadoTransferenciaDto) {
-    return this.transferenciaInventarioService.updateEstado(+id, updateEstadoTransferenciaDto);
-  }
+ 
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(@Param('id') id: string) {
     return this.transferenciaInventarioService.remove(+id);
+  }
+
+
+   @Patch(':id/estado')
+  updateEstado(@Param('id') id: string, @Body() updateEstadoTransferenciaDto: UpdateEstadoTransferenciaDto) {
+    return this.transferenciaInventarioService.updateEstado(+id, updateEstadoTransferenciaDto);
   }
 }

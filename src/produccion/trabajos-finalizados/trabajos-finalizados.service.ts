@@ -297,12 +297,26 @@ export class TrabajosFinalizadosService {
     });
 
     return new TrabajoFinalizadoResponseDto(updatedTrabajo);
-  }
+  }async registrarEnInventario(id: number): Promise<TrabajoFinalizadoResponseDto> {
+    // 1. Obtener el trabajo finalizado
+    const trabajo = await this.prisma.trabajoFinalizado.findUnique({
+      where: { id },
+      include: {
+        trabajoEnProceso: {
+          include: {
+            parametrosTela: {
+              include: { producto: true }
+            }
+          }
+        }
+      }
+    });
 
-  async registrarEnInventario(id: number): Promise<TrabajoFinalizadoResponseDto> {
-    const trabajo = await this.findOne(id);
+    if (!trabajo) {
+      throw new NotFoundException(`Trabajo finalizado con ID ${id} no encontrado`);
+    }
 
-    // Verificar si ya tiene movimientos de inventario
+    // 2. Validar si ya se registró en inventario (Evitar duplicados)
     const totalMovimientos = await this.prisma.movimientoInventario.count({
       where: { trabajoFinalizadoId: id }
     });
@@ -311,89 +325,89 @@ export class TrabajosFinalizadosService {
       throw new ConflictException('Este trabajo ya fue registrado en el inventario');
     }
 
-    // Verificar que el trabajo tenga producto asociado
+    // 3. Validar que tenga producto asociado
     if (!trabajo.trabajoEnProceso?.parametrosTela?.producto) {
       throw new BadRequestException('El trabajo no tiene un producto asociado para registrar en inventario');
     }
 
     const productoId = trabajo.trabajoEnProceso.parametrosTela.producto.id;
     const tiendaId = trabajo.tiendaId;
-    const cantidad = trabajo.cantidadProducida;
+
+    // -------------------------------------------------------
+    // 4. PARSEAR EL JSON DESDE 'cantidadProducida'
+    // -------------------------------------------------------
+    let cantidadPorTalla: Record<string, number>;
+    
+    try {
+      // Asumimos que cantidadProducida es un string tipo '{"S": 10, "M": 5}'
+      cantidadPorTalla = JSON.parse(trabajo.cantidadProducida);
+      
+      // Validación extra: Debe ser un objeto y no null
+      if (typeof cantidadPorTalla !== 'object' || cantidadPorTalla === null) {
+        throw new Error('Formato JSON inválido');
+      }
+    } catch (e) {
+      throw new BadRequestException(`El campo 'cantidadProducida' no contiene un JSON válido. Valor actual: ${trabajo.cantidadProducida}`);
+    }
 
     try {
       const result = await this.prisma.$transaction(async (prisma) => {
-        // Buscar inventario existente
+        
+        // --- A. GESTIÓN DEL INVENTARIO (Upsert) ---
+        
+        // Buscar inventario existente para obtener el stock actual
         const inventarioExistente = await prisma.inventarioTienda.findUnique({
           where: {
-            productoId_tiendaId: {
-              productoId,
-              tiendaId
-            }
+            productoId_tiendaId: { productoId, tiendaId }
           }
         });
 
-        let stockAnterior = 0;
-        let stockNuevo = cantidad;
+        // Obtener el objeto de stock actual (o vacío si es nuevo)
+        const stockAnterior = (inventarioExistente?.stock as Record<string, number>) || {};
+        const stockNuevo = { ...stockAnterior };
 
-        if (inventarioExistente) {
-          stockAnterior = inventarioExistente.stock;
-          stockNuevo = stockAnterior + cantidad;
-
-          // Actualizar inventario existente
-          await prisma.inventarioTienda.update({
-            where: {
-              productoId_tiendaId: {
-                productoId,
-                tiendaId
-              }
-            },
-            data: {
-              stock: { increment: cantidad }
-            }
-          });
-        } else {
-          // Crear nuevo registro de inventario
-          await prisma.inventarioTienda.create({
-            data: {
-              productoId,
-              tiendaId,
-              stock: cantidad,
-              stockMinimo: 5
-            }
-          });
+        // Sumar las cantidades del JSON procesado al stock existente
+        for (const talla in cantidadPorTalla) {
+          // Aseguramos que sea tratado como número
+          const cantidad = Number(cantidadPorTalla[talla]) || 0;
+          stockNuevo[talla] = (stockNuevo[talla] || 0) + cantidad;
         }
 
-        // Crear movimiento de inventario
-        const movimiento = await prisma.movimientoInventario.create({
+        // Guardar el nuevo stock (JSON) usando upsert
+        const inventarioActualizado = await prisma.inventarioTienda.upsert({
+          where: {
+            productoId_tiendaId: { productoId, tiendaId }
+          },
+          update: {
+            stock: stockNuevo
+          },
+          create: {
+            productoId,
+            tiendaId,
+            stock: stockNuevo,
+            stockMinimo: 5 // Valor por defecto
+          }
+        });
+
+        // --- B. CREAR MOVIMIENTO ---
+        await prisma.movimientoInventario.create({
           data: {
-            tipo: TipoMovimiento.ENTRADA_PRODUCCION,
-            cantidad,
+            tipo: 'ENTRADA_PRODUCCION', // Asegúrate que coincide con tu Enum (puede ser ENTRADA_PRODUCCION)
+            cantidad: cantidadPorTalla, // Guardamos el JSON del desglose que acabamos de parsear
             productoId,
             motivo: `Producción terminada - Trabajo ${trabajo.trabajoEnProceso.codigoTrabajo}`,
             trabajoFinalizadoId: id,
-            inventarioTiendaId: tiendaId,
-            stockAnterior,
-            stockNuevo
-          },
-          include: {
-            usuario: {
-              select: {
-                id: true,
-                nombre: true,
-                email: true
-              }
-            }
+            inventarioTiendaId: inventarioActualizado.id,
+            stockAnterior: stockAnterior,
+            stockNuevo: stockNuevo
           }
         });
 
-        // Actualizar el trabajo finalizado con la referencia al movimiento
-        const updatedTrabajo = await prisma.trabajoFinalizado.update({
+        // --- C. RETORNAR RESULTADO COMPLETO ---
+        
+        // Recuperar el objeto completo con todas las relaciones necesarias para el DTO
+        const trabajoFinalizadoCompleto = await prisma.trabajoFinalizado.findUnique({
           where: { id },
-          data: {
-            movimientosInventario: {
-              connect: { id: movimiento.id }
-            }
-          },
           include: {
             trabajoEnProceso: {
               include: {
@@ -403,103 +417,112 @@ export class TrabajosFinalizadosService {
                       select: {
                         id: true,
                         nombre: true,
-                        sku: true, 
+                        sku: true,
                         imagenes: true
                       }
                     }
                   }
                 },
                 costurero: {
-                  select: {
-                    id: true,
-                    nombre: true,
-                    apellido: true
-                  }
+                   select: { id: true, nombre: true, apellido: true }
                 }
               }
             },
             tienda: {
-              select: {
-                id: true,
-                nombre: true
-              }
+              select: { id: true, nombre: true }
             },
-            movimientosInventario: {
+            movimientosInventario: { // Verifica que este nombre coincida con tu schema (puede ser 'movimientoInventario' en singular)
               include: {
-                usuario: {
-                  select: {
-                    id: true,
-                    nombre: true,
-                    email: true
-                  }
-                }
+                usuario: { select: { id: true, nombre: true, email: true } }
               },
               orderBy: { createdAt: 'desc' }
             }
           }
         });
 
-        return updatedTrabajo;
+        // Validación de seguridad para TypeScript
+        if (!trabajoFinalizadoCompleto) {
+            throw new NotFoundException(`Error al recuperar el trabajo finalizado ${id} después de la transacción.`);
+        }
+
+        return trabajoFinalizadoCompleto;
       });
 
       return new TrabajoFinalizadoResponseDto(result);
+
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         if (error.code === 'P2002') {
-          throw new ConflictException('Error al registrar en inventario');
+          throw new ConflictException('Error de conflicto al registrar en inventario (P2002)');
         }
       }
       throw error;
     }
   }
-
-  async getEstadisticas(tiendaId?: number): Promise<any> {
+ async getEstadisticas(tiendaId?: number): Promise<any> {
     const where: Prisma.TrabajoFinalizadoWhereInput = {};
     
     if (tiendaId) {
       where.tiendaId = tiendaId;
     }
 
+    const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const startOfWeek = new Date();
+    startOfWeek.setDate(startOfWeek.getDate() - 7);
+
     const [
       totalTrabajos,
-      totalUnidadesProducidas,
       calidadExcelente,
       calidadBuena,
       calidadRegular,
       calidadDefectuoso,
-      produccionEsteMes,
-      produccionSemanaActual
+      todosLosTrabajos 
     ] = await Promise.all([
       this.prisma.trabajoFinalizado.count({ where }),
-      this.prisma.trabajoFinalizado.aggregate({
-        where,
-        _sum: { cantidadProducida: true }
-      }),
       this.prisma.trabajoFinalizado.count({ where: { ...where, calidad: 'EXCELENTE' } }),
       this.prisma.trabajoFinalizado.count({ where: { ...where, calidad: 'BUENA' } }),
       this.prisma.trabajoFinalizado.count({ where: { ...where, calidad: 'REGULAR' } }),
       this.prisma.trabajoFinalizado.count({ where: { ...where, calidad: 'DEFECTUOSO' } }),
-      this.prisma.trabajoFinalizado.aggregate({
-        where: {
-          ...where,
-          fechaFinalizacion: {
-            gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-          }
-        },
-        _sum: { cantidadProducida: true }
-      }),
-      this.prisma.trabajoFinalizado.aggregate({
-        where: {
-          ...where,
-          fechaFinalizacion: {
-            gte: new Date(new Date().setDate(new Date().getDate() - 7))
-          }
-        },
-        _sum: { cantidadProducida: true }
+      this.prisma.trabajoFinalizado.findMany({
+        where,
+        select: {
+          cantidadProducida: true,
+          fechaFinalizacion: true
+        }
       })
     ]);
 
-    const total = totalUnidadesProducidas._sum.cantidadProducida || 0;
+    // --- CÁLCULOS EN MEMORIA ---
+    let totalUnidades = 0;
+    let produccionMes = 0;
+    let produccionSemana = 0;
+
+    todosLosTrabajos.forEach(trabajo => {
+      let cantidadTotalRegistro = 0;
+      try {
+        const json = JSON.parse(trabajo.cantidadProducida);
+        if (json && typeof json === 'object') {
+          // 💡 CORRECCIÓN AQUÍ:
+          // 1. Casteamos 'json' como Record<string, any> para que Object.values funcione.
+          // 2. Tipamos 'val' como 'any' para permitir la conversión a Number().
+          cantidadTotalRegistro = Object.values(json as Record<string, any>).reduce((acc: number, val: any) => {
+             return acc + (Number(val) || 0);
+          }, 0);
+        }
+      } catch (e) {
+        cantidadTotalRegistro = Number(trabajo.cantidadProducida) || 0;
+      }
+
+      totalUnidades += cantidadTotalRegistro;
+
+      if (trabajo.fechaFinalizacion >= startOfMonth) {
+        produccionMes += cantidadTotalRegistro;
+      }
+      if (trabajo.fechaFinalizacion >= startOfWeek) {
+        produccionSemana += cantidadTotalRegistro;
+      }
+    });
+
     const porcentajeCalidad = {
       EXCELENTE: totalTrabajos > 0 ? (calidadExcelente / totalTrabajos) * 100 : 0,
       BUENA: totalTrabajos > 0 ? (calidadBuena / totalTrabajos) * 100 : 0,
@@ -509,81 +532,85 @@ export class TrabajosFinalizadosService {
 
     return {
       totalTrabajos,
-      totalUnidadesProducidas: total,
+      totalUnidadesProducidas: totalUnidades,
       calidad: porcentajeCalidad,
-      produccionEsteMes: produccionEsteMes._sum.cantidadProducida || 0,
-      produccionSemanaActual: produccionSemanaActual._sum.cantidadProducida || 0,
-      promedioUnidadesPorTrabajo: totalTrabajos > 0 ? total / totalTrabajos : 0
+      produccionEsteMes: produccionMes,
+      produccionSemanaActual: produccionSemana,
+      promedioUnidadesPorTrabajo: totalTrabajos > 0 ? totalUnidades / totalTrabajos : 0
     };
-  }
-
-  async getProduccionPorParametros(tiendaId?: number): Promise<any> {
-  const where: Prisma.TrabajoFinalizadoWhereInput = {};
+  }async getProduccionPorParametros(tiendaId?: number): Promise<any> {
+    const where: Prisma.TrabajoFinalizadoWhereInput = {};
   
-  if (tiendaId) {
-    where.trabajoEnProceso = { tiendaId };
-  }
+    if (tiendaId) {
+      where.tiendaId = tiendaId; 
+    }
 
-  const produccion = await this.prisma.trabajoFinalizado.groupBy({
-    by: ['trabajoEnProcesoId'],
-    where,
-    _sum: {
-      cantidadProducida: true
-    },
-    _count: {
-      id: true
-    },
-    orderBy: {
-      _sum: {
-        cantidadProducida: 'desc'
-      }
-    },
-    take: 10
-  });
-
-  // Obtener detalles de los parámetros de tela
-  const produccionConDetalles = await Promise.all(
-    produccion.map(async (item) => {
-      const trabajo = await this.prisma.trabajoFinalizado.findUnique({
-        where: { id: item.trabajoEnProcesoId },
-        include: {
-          trabajoEnProceso: {
-            include: {
-              parametrosTela: {
-                include: {
-                  producto: {
-                    select: {
-                      id: true,
-                      nombre: true,
-                      imagenes: true
-                    }
+    const trabajos = await this.prisma.trabajoFinalizado.findMany({
+      where,
+      include: {
+        trabajoEnProceso: {
+          include: {
+            parametrosTela: {
+              include: {
+                producto: {
+                  select: {
+                    id: true,
+                    nombre: true,
+                    imagenes: true
                   }
                 }
               }
             }
           }
         }
-      });
+      }
+    });
 
-      // Verificar que todo exista antes de acceder a las propiedades
-      if (!trabajo || !trabajo.trabajoEnProceso || !trabajo.trabajoEnProceso.parametrosTela) {
-        return null; // O manejar el caso de error apropiadamente
+    // 2. Agrupar y Sumar en Memoria
+    const agrupado = new Map<number, any>();
+
+    trabajos.forEach(tf => {
+      const params = tf.trabajoEnProceso?.parametrosTela;
+      if (!params) return;
+
+      const key = params.id;
+
+      // Calcular cantidad numérica del JSON
+      let cantidadNumerica = 0;
+      try {
+        const json = JSON.parse(tf.cantidadProducida);
+        // 💡 CORRECCIÓN AQUÍ TAMBIÉN:
+        if (json && typeof json === 'object') {
+            cantidadNumerica = Object.values(json as Record<string, any>).reduce((acc: number, val: any) => {
+                return acc + (Number(val) || 0);
+            }, 0);
+        }
+      } catch (e) {
+        cantidadNumerica = 0;
       }
 
-      return {
-        parametrosTelaId: trabajo.trabajoEnProceso.parametrosTela.id,
-        codigoReferencia: trabajo.trabajoEnProceso.parametrosTela.codigoReferencia,
-        nombreModelo: trabajo.trabajoEnProceso.parametrosTela.nombreModelo,
-        producto: trabajo.trabajoEnProceso.parametrosTela.producto || null,
-        totalTrabajos: item._count.id,
-        totalUnidades: item._sum.cantidadProducida || 0
-      };
-    })
-  );
+      if (!agrupado.has(key)) {
+        agrupado.set(key, {
+          parametrosTelaId: params.id,
+          codigoReferencia: params.codigoReferencia,
+          nombreModelo: params.nombreModelo,
+          producto: params.producto || null,
+          totalTrabajos: 0,
+          totalUnidades: 0
+        });
+      }
 
-  // Filtrar resultados nulos
-  return produccionConDetalles.filter(item => item !== null);
-}
+      const item = agrupado.get(key);
+      item.totalTrabajos += 1;
+      item.totalUnidades += cantidadNumerica;
+    });
+
+    const resultado = Array.from(agrupado.values())
+      .sort((a, b) => b.totalUnidades - a.totalUnidades) 
+      .slice(0, 10); 
+
+    return resultado;
+  }
   async remove(id: number): Promise<void> {
     const trabajo = await this.findOne(id);
 
@@ -600,13 +627,12 @@ export class TrabajosFinalizadosService {
       where: { id }
     });
   }
-
-    async getAgregadoPorProducto(
+async getAgregadoPorProducto(
         productoId: number,
         tiendaId?: number
     ): Promise<TrabajoAgregadoResponseDto> {
 
-        // 1. Verificar la existencia del producto y obtener su nombre
+        // 1. Verificar existencia del producto
         const producto = await this.prisma.producto.findUnique({
             where: { id: productoId },
             select: { nombre: true, id: true }
@@ -615,43 +641,64 @@ export class TrabajosFinalizadosService {
         if (!producto) {
             throw new NotFoundException(`Producto con ID ${productoId} no encontrado`);
         }
-        
-        // 2. Definir el filtro WHERE de SQL (tiendaId es opcional)
-        const tiendaFilter = tiendaId 
-            ? Prisma.sql`AND tf.\`tiendaId\` = ${tiendaId}` // Usar acentos graves para MySQL
-            : Prisma.empty;
 
-        // 3. ⭐ CONSULTA CRUDA (SQL) con JOINs para la agregación ⭐
-        // La ruta de JOINs es: TrabajoFinalizado -> TrabajoEnProceso -> ParametrosTela -> Producto
-       const resultadoRaw = await this.prisma.$queryRaw<{
-        total_costo: string, 
-        total_cantidad: bigint
-    }[]>(Prisma.sql`
-        SELECT
-            SUM(tf.\`cantidadProducida\`) AS total_cantidad,
-            -- CLAVE: Sumamos directamente el costo de la producción, usando COALESCE para tratar NULL como 0
-            CAST(
-                SUM(COALESCE(tf.\`costo\`, 0))
-                AS CHAR) AS total_costo -- Forzamos a CHAR
-        FROM \`TrabajoFinalizado\` tf
-        JOIN \`TrabajoEnProceso\` tep ON tep.id = tf.\`trabajoEnProcesoId\`
-        JOIN \`ParametrosTela\` pt ON pt.id = tep.\`parametrosTelaId\`
-        WHERE 
-            pt.\`productoId\` = ${productoId}
-            ${tiendaFilter}
-    `);
+        // 2. Traer los trabajos finalizados relacionados con este producto
+        // Ya no usamos SQL crudo complejo, usamos la API de Prisma que es más segura y limpia.
+        const trabajos = await this.prisma.trabajoFinalizado.findMany({
+            where: {
+                // Filtro por Tienda (si existe)
+                ...(tiendaId ? { tiendaId: tiendaId } : {}),
+                // Filtro por Producto (a través de las relaciones)
+                trabajoEnProceso: {
+                    parametrosTela: {
+                        productoId: productoId
+                    }
+                }
+            },
+            select: {
+                cantidadProducida: true, // Traemos el string JSON
+                costo: true              // Traemos el costo numérico
+            }
+        });
 
-        const resultado = resultadoRaw[0];
+        // 3. Calcular Totales en Memoria
+        let totalCantidadProducida = 0;
+        let totalCosto = 0;
 
-        // 4. Mapear y convertir los resultados
-        const totalCosto = resultado.total_costo ? parseFloat(resultado.total_costo) : 0;
-        const totalCantidadProducida = resultado.total_cantidad ? Number(resultado.total_cantidad) : 0;
+        trabajos.forEach(trabajo => {
+            // A. Sumar Costo (simple)
+            // Convertimos Decimal a number si es necesario (depende de tu config de Prisma)
+            const costoNumerico = Number(trabajo.costo) || 0;
+            totalCosto += costoNumerico;
 
+            // B. Sumar Cantidad (parseando el JSON)
+            try {
+                // Intentamos parsear: '{"S": 10, "M": 5}'
+                const json = JSON.parse(trabajo.cantidadProducida);
+                
+                if (json && typeof json === 'object') {
+                    // Sumamos los valores del objeto: 10 + 5 = 15
+                    const cantidadRegistro = Object.values(json as Record<string, any>).reduce((acc: number, val: any) => {
+                        return acc + (Number(val) || 0);
+                    }, 0);
+                    
+                    totalCantidadProducida += cantidadRegistro;
+                }
+            } catch (e) {
+                // Fallback: Si por alguna razón antigua el dato es un número simple en el string
+                totalCantidadProducida += Number(trabajo.cantidadProducida) || 0;
+            }
+        });
+
+        // 4. Retornar DTO
         return new TrabajoAgregadoResponseDto({
             productoId: producto.id,
             nombreProducto: producto.nombre,
-            totalCosto: totalCosto,
-            totalCantidadProducida: totalCantidadProducida,
+            totalCosto: totalCosto, // Total acumulado
+            totalCantidadProducida: totalCantidadProducida, // Total acumulado del parseo
         });
     }
+
+
+    
 }

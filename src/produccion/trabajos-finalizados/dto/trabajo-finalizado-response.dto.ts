@@ -4,7 +4,7 @@ export class TrabajoFinalizadoResponseDto {
   id: number;
   trabajoEnProcesoId: number;
   fechaFinalizacion: Date;
-  cantidadProducida: number;
+  cantidadProducida: string;
   calidad: CalidadProducto;
   notas?: string;
   costo?:number;

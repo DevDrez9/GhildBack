@@ -205,15 +205,16 @@ export class SucursalService {
     });
   }
 
-  async getEstadisticas(id: number): Promise<any> {
+ async getEstadisticas(id: number): Promise<any> {
     const sucursal = await this.findOne(id);
 
+    // 1. Ejecutar consultas en paralelo
     const [
       totalProductos,
       totalVentas,
       totalUsuarios,
       ventasMensuales,
-      stockTotal
+      allInventarios // ✅ CAMBIO: Traemos los registros, no el agregado
     ] = await Promise.all([
       this.prisma.inventarioSucursal.count({ 
         where: { sucursalId: id } 
@@ -236,11 +237,17 @@ export class SucursalService {
           total: true
         }
       }),
-      this.prisma.inventarioSucursal.aggregate({
+      // ✅ CAMBIO: Traemos solo el campo stock de todos los items para sumar en memoria
+      this.prisma.inventarioSucursal.findMany({
         where: { sucursalId: id },
-        _sum: { stock: true }
+        select: { stock: true }
       })
     ]);
+
+    // ✅ CAMBIO: Calcular el stock total sumando los JSONs
+    const stockTotalCalculado = allInventarios.reduce((total, inv) => {
+        return total + calcularStockTotal(inv.stock);
+    }, 0);
 
     return {
       sucursal: new SucursalResponseDto(sucursal),
@@ -251,9 +258,117 @@ export class SucursalService {
         ventasMensuales: ventasMensuales.reduce((total, venta) => 
           total + (venta._sum.total?.toNumber() || 0), 0
         ),
-        stockTotal: stockTotal._sum.stock || 0
+        stockTotal: stockTotalCalculado // ✅ Usamos el cálculo manual
       }
     };
+  }
+
+  // ✅ CAMBIO: 'cantidad' ahora es Record<string, number>
+  async transferirProducto(
+    sucursalOrigenId: number, 
+    sucursalDestinoId: number, 
+    productoId: number, 
+    cantidadPorTalla: Record<string, number> 
+  ): Promise<any> {
+    
+    if (sucursalOrigenId === sucursalDestinoId) {
+      throw new BadRequestException('No se puede transferir a la misma sucursal');
+    }
+
+    // Validar que el objeto de cantidad no esté vacío
+    if (Object.keys(cantidadPorTalla).length === 0 || Object.values(cantidadPorTalla).some(qty => qty <= 0)) {
+      throw new BadRequestException('Las cantidades a transferir deben ser mayores a 0');
+    }
+
+    // 1. Verificar existencia en sucursal origen
+    const inventarioOrigen = await this.prisma.inventarioSucursal.findUnique({
+      where: {
+        productoId_sucursalId: {
+          productoId,
+          sucursalId: sucursalOrigenId
+        }
+      }
+    });
+
+    if (!inventarioOrigen) {
+      throw new BadRequestException('El producto no existe en la sucursal de origen');
+    }
+
+    // 2. Validar stock suficiente por talla en origen (En memoria)
+    const stockOrigenActual = (inventarioOrigen.stock as Record<string, number>) || {};
+    
+    for (const talla in cantidadPorTalla) {
+        const qtySolicitada = cantidadPorTalla[talla];
+        const qtyDisponible = stockOrigenActual[talla] || 0;
+        
+        if (qtyDisponible < qtySolicitada) {
+            throw new BadRequestException(`Stock insuficiente en origen para la talla ${talla}. Disponible: ${qtyDisponible}, Solicitado: ${qtySolicitada}`);
+        }
+    }
+
+    // 3. Iniciar transacción
+    return this.prisma.$transaction(async (prisma) => {
+      
+      // A. Calcular y actualizar Origen
+      const nuevoStockOrigen = { ...stockOrigenActual };
+      for (const talla in cantidadPorTalla) {
+          nuevoStockOrigen[talla] -= cantidadPorTalla[talla];
+          if (nuevoStockOrigen[talla] === 0) delete nuevoStockOrigen[talla];
+      }
+
+      await prisma.inventarioSucursal.update({
+        where: { id: inventarioOrigen.id },
+        data: { stock: nuevoStockOrigen }
+      });
+
+      // B. Calcular y actualizar Destino
+      // Primero buscamos si ya existe el destino
+      const inventarioDestino = await prisma.inventarioSucursal.findUnique({
+        where: {
+          productoId_sucursalId: {
+            productoId,
+            sucursalId: sucursalDestinoId
+          }
+        }
+      });
+
+      const stockDestinoActual = (inventarioDestino?.stock as Record<string, number>) || {};
+      const nuevoStockDestino = { ...stockDestinoActual };
+
+      for (const talla in cantidadPorTalla) {
+          nuevoStockDestino[talla] = (nuevoStockDestino[talla] || 0) + cantidadPorTalla[talla];
+      }
+
+      // Usamos upsert para crear o actualizar
+      await prisma.inventarioSucursal.upsert({
+        where: {
+            productoId_sucursalId: {
+                productoId,
+                sucursalId: sucursalDestinoId
+            }
+        },
+        update: { stock: nuevoStockDestino },
+        create: {
+            productoId,
+            sucursalId: sucursalDestinoId,
+            tiendaId: inventarioOrigen.tiendaId,
+            stock: nuevoStockDestino,
+            stockMinimo: inventarioOrigen.stockMinimo || 5
+        }
+      });
+
+      // C. Registrar movimientos (Opcional pero recomendado)
+      // Aquí deberías insertar en `MovimientoInventario` tanto la salida de la sucursal 1 como la entrada a la sucursal 2
+      // usando `cantidadPorTalla` como JSON.
+
+      return {
+        message: 'Transferencia realizada exitosamente',
+        cantidad: cantidadPorTalla,
+        productoId,
+        sucursalOrigenId,
+        sucursalDestinoId
+      };
+    });
   }
 
   async getInventario(sucursalId: number): Promise<any> {
@@ -305,89 +420,11 @@ export class SucursalService {
     };
   }
 
-  async transferirProducto(sucursalOrigenId: number, sucursalDestinoId: number, productoId: number, cantidad: number): Promise<any> {
-    if (sucursalOrigenId === sucursalDestinoId) {
-      throw new BadRequestException('No se puede transferir a la misma sucursal');
-    }
-
-    if (cantidad <= 0) {
-      throw new BadRequestException('La cantidad debe ser mayor a 0');
-    }
-
-    // Verificar existencia en sucursal origen
-    const inventarioOrigen = await this.prisma.inventarioSucursal.findUnique({
-      where: {
-        productoId_sucursalId: {
-          productoId,
-          sucursalId: sucursalOrigenId
-        }
-      }
-    });
-
-    if (!inventarioOrigen || inventarioOrigen.stock < cantidad) {
-      throw new BadRequestException('Stock insuficiente en la sucursal de origen');
-    }
-
-    // Verificar existencia en sucursal destino
-    const inventarioDestino = await this.prisma.inventarioSucursal.findUnique({
-      where: {
-        productoId_sucursalId: {
-          productoId,
-          sucursalId: sucursalDestinoId
-        }
-      }
-    });
-
-    // Iniciar transacción
-    return this.prisma.$transaction(async (prisma) => {
-      // Restar stock de origen
-      await prisma.inventarioSucursal.update({
-        where: {
-          productoId_sucursalId: {
-            productoId,
-            sucursalId: sucursalOrigenId
-          }
-        },
-        data: {
-          stock: { decrement: cantidad }
-        }
-      });
-
-      // Sumar stock a destino (o crear registro si no existe)
-      if (inventarioDestino) {
-        await prisma.inventarioSucursal.update({
-          where: {
-            productoId_sucursalId: {
-              productoId,
-              sucursalId: sucursalDestinoId
-            }
-          },
-          data: {
-            stock: { increment: cantidad }
-          }
-        });
-      } else {
-        await prisma.inventarioSucursal.create({
-          data: {
-            productoId,
-            sucursalId: sucursalDestinoId,
-            tiendaId: inventarioOrigen.tiendaId,
-            stock: cantidad,
-            stockMinimo: inventarioOrigen.stockMinimo
-          }
-        });
-      }
-
-      // Registrar movimiento de inventario
-      // (Aquí podrías crear un registro en tu tabla de movimientos)
-
-      return {
-        message: 'Transferencia realizada exitosamente',
-        cantidad,
-        productoId,
-        sucursalOrigenId,
-        sucursalDestinoId
-      };
-    });
-  }
 }
+
+const calcularStockTotal = (stock: Prisma.JsonValue): number => {
+    if (typeof stock === 'object' && stock !== null && !Array.isArray(stock)) {
+        return Object.values<number>(stock as Record<string, number>).reduce((sum, current) => sum + (current || 0), 0);
+    }
+    return 0;
+};

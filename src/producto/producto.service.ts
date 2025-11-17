@@ -132,6 +132,7 @@ export class ProductoService {
                     subcategoria: true,
                     tienda: true,
                     proveedor: true,
+                    
                     imagenes: true // Incluye las imágenes para la respuesta
                 }
             });

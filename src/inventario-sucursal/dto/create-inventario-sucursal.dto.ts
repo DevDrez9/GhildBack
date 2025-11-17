@@ -1,4 +1,4 @@
-import { IsNumber, IsOptional } from 'class-validator';
+import { IsNumber, IsObject, IsOptional } from 'class-validator';
 
 export class CreateInventarioSucursalDto {
   @IsNumber()
@@ -10,9 +10,13 @@ export class CreateInventarioSucursalDto {
   @IsNumber()
   tiendaId!: number;
 
-  @IsNumber()
+  /**
+   * ✅ MODIFICADO: El stock inicial ahora es un objeto por tallas.
+   * @example { "S": 10, "M": 15 }
+   */
+  @IsObject()
   @IsOptional()
-  stock?: number;
+  stock?: Record<string, number>;
 
   @IsNumber()
   @IsOptional()

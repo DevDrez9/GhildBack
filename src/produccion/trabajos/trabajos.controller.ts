@@ -82,4 +82,9 @@ export class TrabajosController {
   remove(@Param('id') id: string) {
     return this.trabajosService.remove(+id);
   }
+
+  @Get('estadisticas/cumplimiento')
+  getEstadisticasCumplimiento(@Query('tiendaId') tiendaId?: string) {
+    return this.trabajosService.getEstadisticasCumplimiento(tiendaId ? +tiendaId : undefined);
+  }
 }

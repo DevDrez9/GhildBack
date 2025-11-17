@@ -65,13 +65,13 @@ export class SucursalController {
     @Param('origenId') origenId: string,
     @Param('destinoId') destinoId: string,
     @Param('productoId') productoId: string,
-    @Query('cantidad') cantidad: string
+    @Query('cantidad') cantidad: Record<string, number> 
   ) {
     return this.sucursalService.transferirProducto(
       +origenId,
       +destinoId,
       +productoId,
-      +cantidad
+      cantidad
     );
   }
 
