@@ -12,7 +12,7 @@ async function bootstrap() {
 
   app.useGlobalPipes(new ValidationPipe(
     {
-      whitelist:true
+      whitelist: true
     }
   ))
 
@@ -25,29 +25,28 @@ async function bootstrap() {
   const documentFactory = () => SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api', app, documentFactory);
 
- 
 
-      // Configuración específica de CORS
+
+  // Configuración de CORS completamente abierta
   app.enableCors({
-    origin: '*', // ¡CUIDADO: No usar en producción!
-    methods: '*',
-    allowedHeaders: '*',
-    credentials: false,
+    origin: true, // Esto refleja el origin que hace la petición, permitiendo todos pero sin romper credentials
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    credentials: true,
   });
 
-    app.use(require('express').json({ limit: '50mb' }));
+  app.use(require('express').json({ limit: '50mb' }));
   app.use(require('express').urlencoded({ extended: true, limit: '50mb' }));
 
-   const staticPath = path.join(process.cwd(), 'public');
-  
+  const staticPath = path.join(process.cwd(), 'public');
+
   // Imprime la ruta para la verificación final
-  console.log('Ruta de Archivos Estáticos configurada: ', staticPath); 
+  console.log('Ruta de Archivos Estáticos configurada: ', staticPath);
 
-   app.use('/uploads', express.static(staticPath));
+  app.use('/uploads', express.static(staticPath));
 
 
 
-      await app.listen(process.env.PORT ?? 3000);
+  await app.listen(process.env.PORT ?? 3000);
 
 }
 bootstrap();

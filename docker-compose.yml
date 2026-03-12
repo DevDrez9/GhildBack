@@ -2,6 +2,8 @@ version: '3.8'
 
 services:
   api-tiendapro:
+
+    command: sh -c "npx prisma generate && npm run start:prod"
     container_name: api-tiendapro
     build: .
     restart: always # Si el servidor se reinicia, la app arranca sola
