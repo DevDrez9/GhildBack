@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -29,12 +30,23 @@ import { ConfigModule } from '@nestjs/config';
 import { InventarioTelaModule } from './inventario-tela/inventario-tela.module';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
+import { ActivityLogService } from './activity-log/activity-log.service';
+import { ActivityLogModule } from './activity-log/activity-log.module';
+import { ActivityLogInterceptor } from './activity-log/activity-log.interceptor';
 
 
 @Module({
-  
+
   controllers: [AppController],
-  providers: [AppService,PrismaService],
+  providers: [
+    AppService,
+    PrismaService,
+    ActivityLogService,
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: ActivityLogInterceptor,
+    },
+  ],
   imports: [ConfigWebModule, UsuarioModule, AuthModule, TiendaModule, SucursalModule, ProductoModule, CategoriaModule, SubcategoriaModule, VentaModule, CarritoModule, ProveedorModule, TelaModule, CompraTelaItemModule, CompraProveedorModule, InventarioTiendaModule, InventarioSucursalModule, TransferenciaInventarioModule, ParametrosFisicosTelaModule, CostureroModule, ParametrosTelaModule, TrabajosModule, TrabajosFinalizadosModule,
     ConfigModule.forRoot({
       isGlobal: true,
@@ -42,9 +54,10 @@ import { join } from 'path';
       cache: true,
     }),
     InventarioTelaModule,
-  ServeStaticModule.forRoot({
+    ServeStaticModule.forRoot({
       rootPath: join(__dirname, '..', 'public'), // Apunta a 'public'
-    serveRoot: '/', // Sirve desde la raíz de la URL
-    }),],
+      serveRoot: '/', // Sirve desde la raíz de la URL
+    }),
+    ActivityLogModule,],
 })
-export class AppModule {}
+export class AppModule { }

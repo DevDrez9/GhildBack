@@ -1,0 +1,17 @@
+# Ignorar carpetas generadas localmente
+node_modules/
+dist/
+generated/
+
+# Archivos de entorno y logs
+.env
+*.log
+.npm/
+
+# Git
+.git/
+.gitignore
+
+# Caché general
+coverage/
+.nest/

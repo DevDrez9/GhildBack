@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  api-tiendapro:
+    container_name: api-tiendapro
+    build: .
+    restart: always # Si el servidor se reinicia, la app arranca sola
+    ports:
+      - "3002:3000" # Puerto externo : Puerto interno
+    
+    # Aquí le decimos a Docker que lea las variables del archivo .env
+    env_file:
+      - .env
+    
+    # Esto es CRUCIAL si tu DB está en el mismo servidor (localhost)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    volumes:
+      # Esto guarda las imágenes subidas en tu servidor real para que no se borren
+      - ./uploads:/app/uploads
