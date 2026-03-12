@@ -27,9 +27,12 @@ async function bootstrap() {
 
 
 
-  // Configuración de CORS completamente abierta
+  // Configuración de CORS completamente abierta y dinámica
   app.enableCors({
-    origin: true, // Esto refleja el origin que hace la petición, permitiendo todos pero sin romper credentials
+    origin: (origin, callback) => {
+      // Acepta cualquier origen dinámicamente, ideal para todo frontend
+      callback(null, true);
+    },
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
   });
